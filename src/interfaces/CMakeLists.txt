@@ -21,6 +21,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/HEADING.msg"
   "msg/WIND.msg"
   "msg/YPR.msg"
+  "msg/Command.msg"
   DEPENDENCIES std_msgs
 )
 
