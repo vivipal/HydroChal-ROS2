@@ -1,0 +1,3 @@
+[submodule "src/hydrochal/include/raspberry-sbus"]
+	path = src/hydrochal/include/raspberry-sbus
+	url = https://github.com/Carbon225/raspberry-sbus

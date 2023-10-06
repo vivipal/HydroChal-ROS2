@@ -5,6 +5,11 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+
+# sbus library for rpi
+add_subdirectory(include/raspberry-sbus)
+
+
 # find dependencies
 find_package(ament_cmake REQUIRED)
 # uncomment the following section in order to fill in
@@ -15,12 +20,19 @@ find_package(interfaces REQUIRED)
 
 add_executable(ws src/WeatherStation.cpp)
 add_executable(imu src/IMU.cpp)
+add_executable(rx src/rx.cpp)
+
 ament_target_dependencies(ws rclcpp std_msgs interfaces)
 ament_target_dependencies(imu rclcpp std_msgs interfaces)
+target_link_libraries(rx libsbus)
+ament_target_dependencies(rx rclcpp interfaces)
+
+
 
 install(TARGETS
   ws
   imu
+  rx
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
