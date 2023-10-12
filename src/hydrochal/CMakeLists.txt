@@ -12,8 +12,8 @@ add_subdirectory(include/raspberry-sbus)
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-# uncomment the following section in order to fill in
-# further dependencies manually.
+find_package(ament_cmake_python REQUIRED)
+find_package(rclpy REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(interfaces REQUIRED)
@@ -27,13 +27,21 @@ ament_target_dependencies(imu rclcpp std_msgs interfaces)
 target_link_libraries(rx libsbus)
 ament_target_dependencies(rx rclcpp interfaces)
 
-
-
 install(TARGETS
   ws
   imu
   rx
   DESTINATION lib/${PROJECT_NAME})
+
+
+
+
+ament_python_install_package(${PROJECT_NAME})
+
+install(PROGRAMS
+  src/Rudder.py
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
