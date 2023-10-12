@@ -49,7 +49,7 @@ int main(int argc, char const *argv[]) {
 
 
 
-  std::string ttydevice = "/dev/ttyUSB2";
+  std::string ttydevice = "/dev/ttyAMA1";
 
   // initialisation of sbus
   static SBUS sbus;
