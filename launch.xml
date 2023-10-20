@@ -1,0 +1,6 @@
+<launch>
+	<node pkg="hydrochal" exec="ws" name="WS"/>
+	<node pkg="hydrochal" exec="imu" name="IMU"/>
+	<node pkg="hydrochal" exec="rx" name="RX"/> 
+</launch>
+

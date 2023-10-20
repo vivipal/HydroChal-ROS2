@@ -9,6 +9,8 @@
 #include <sstream>
 
 
+#include <stdexcept>
+
 class WeatherStationNode : public rclcpp::Node {
   public:
      WeatherStationNode() : Node("weather_station_node") {
@@ -94,7 +96,7 @@ int main(int argc, char const *argv[]) {
       while (std::getline(ss, val, ',')) {
         values.push_back(val);
       }
-
+      try{
       if (values[0]=="$GPRMC") {
         interfaces::msg::GPS msg = getGPSmsg(values);
         n->gps_publisher_->publish(msg);
@@ -107,7 +109,10 @@ int main(int argc, char const *argv[]) {
         interfaces::msg::HEADING msg = getHEADINGmsg(values);
         n->heading_publisher_->publish(msg);
       }
-
+      }	catch (const std::exception& e) // reference to the base of a polymorphic object
+{
+    std::cout << e.what(); // information from length_error printed
+}
     }
   }
 
