@@ -3,6 +3,8 @@ import rclpy
 from std_msgs.msg import Int32
 import RPi.GPIO as GPIO
 
+global pwm
+
 def servo_callback(msg):
     # Contrôler le servo en fonction de la valeur du message reçu
     servo_value = msg.data
@@ -17,16 +19,16 @@ def servo_callback(msg):
 
     # Conversion de la valeur de commande en une valeur de PWM
     duty_cycle = 2.5 + (12.5 * servo_value / 100)
-
-    # Configuration du GPIO 18 en mode de sortie PWM
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setup(18, GPIO.OUT)
-    pwm = GPIO.PWM(18, 50)  # Fréquence de 50 Hz
     pwm.start(duty_cycle)
 
 def main():
     rclpy.init()
     node = rclpy.create_node('servo_controller')
+
+    # Configuration du GPIO 18 en mode de sortie PWM
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(18, GPIO.OUT)
+    pwm = GPIO.PWM(18, 50)  # Fréquence de 50 Hz
 
     # Créer un abonné pour le topic "/cmd_safran"
     subscription = node.create_subscription(Int32, '/cmd_safran', servo_callback, 10)
