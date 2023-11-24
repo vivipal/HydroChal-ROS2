@@ -5,7 +5,7 @@ import RPi.GPIO as GPIO
 
 global pwm
 
-def servo_callback(msg):
+def servo_callback(msg, pwm):
     # Contrôler le servo en fonction de la valeur du message reçu
     servo_value = msg.data
 
@@ -23,7 +23,7 @@ def servo_callback(msg):
 
 def main():
     rclpy.init()
-    node = rclpy.create_node('servo_controller')
+    node = rclpy.create_node('rudder_controller')
 
     # Configuration du GPIO 18 en mode de sortie PWM
     GPIO.setmode(GPIO.BCM)
@@ -31,7 +31,7 @@ def main():
     pwm = GPIO.PWM(18, 50)  # Fréquence de 50 Hz
 
     # Créer un abonné pour le topic "/cmd_safran"
-    subscription = node.create_subscription(Int32, '/cmd_safran', servo_callback, 10)
+    subscription = node.create_subscription(Int32, '/cmd_safran', lambda msg: servo_callback(msg, pwm), 10)
 
     try:
         rclpy.spin(node)
