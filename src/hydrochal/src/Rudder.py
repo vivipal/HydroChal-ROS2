@@ -1,46 +1,39 @@
 #!/usr/bin/env python3
 import rclpy
 from std_msgs.msg import Int32
-import RPi.GPIO as GPIO
+import pigpio
 
-global pwm
 
-def servo_callback(msg, pwm):
+def servo_callback(msg, pi, pin):
     # Contrôler le servo en fonction de la valeur du message reçu
-    servo_value = msg.data
-
-    # Exemple de logique pour contrôler le servo en fonction de la valeur
-    # Assurez-vous d'adapter cette logique en fonction de vos besoins
-    # Vous devrez peut-être ajuster les plages de valeurs en fonction de votre servo.
-    if servo_value < 0:
-        servo_value = 0
-    elif servo_value > 100:
-        servo_value = 100
-
-    # Conversion de la valeur de commande en une valeur de PWM
-    duty_cycle = 2.5 + (12.5 * servo_value / 100)
-    pwm.start(duty_cycle)
+    cmd = msg.data
+    print("cmd : ",cmd)
+    pi.set_servo_pulsewidth(pin, cmd)
+    print("read : ",pi.read(pin))
 
 def main():
     rclpy.init()
     node = rclpy.create_node('rudder_controller')
 
     # Configuration du GPIO 18 en mode de sortie PWM
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setup(18, GPIO.OUT)
-    pwm = GPIO.PWM(18, 50)  # Fréquence de 50 Hz
+    NUM_GPIO = 18
+    MIN_WIDTH=1000
+    MAX_WIDTH=2000
+
+    pi = pigpio.pi()
 
     # Créer un abonné pour le topic "/cmd_safran"
-    subscription = node.create_subscription(Int32, '/cmd_safran', lambda msg: servo_callback(msg, pwm), 10)
+    subscription = node.create_subscription(Int32, '/cmd_safran', lambda msg: servo_callback(msg, pi, NUM_GPIO), 10)
 
     try:
+        print("yoy1")
         rclpy.spin(node)
+        print("yoy2")
     except KeyboardInterrupt:
         pass
 
     # Arrêter le PWM et nettoyer
-    pwm.stop()
-    GPIO.cleanup()
+    pi.stop()
     node.destroy_node()
     rclpy.shutdown()
 
