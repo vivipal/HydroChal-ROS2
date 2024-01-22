@@ -40,6 +40,10 @@ ament_python_install_package(${PROJECT_NAME})
 
 install(PROGRAMS
   src/Rudder.py
+  src/regulation.py
+  src/untitled.py
+  src/test.py
+  
   DESTINATION lib/${PROJECT_NAME}
 )
 
