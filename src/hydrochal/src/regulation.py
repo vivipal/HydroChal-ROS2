@@ -14,21 +14,7 @@ from interfaces.msg import YPR
 from interfaces.msg import regulation
 #ROBLIB
 
-def clear(ax):
-    plt.pause(0.001)
-    plt.cla()
-    ax.set_xlim(ax.xmin,ax.xmax)
-    ax.set_ylim(ax.ymin,ax.ymax)
 
-def init_figure(xmin,xmax,ymin,ymax): 
-    fig = plt.figure()
-    ax = fig.add_subplot(111, aspect='equal')   
-    ax.xmin=xmin
-    ax.xmax=xmax
-    ax.ymin=ymin
-    ax.ymax=ymax
-    clear(ax)
-    return ax
 
 def angle(x):
     x=x.flatten()
@@ -43,25 +29,6 @@ def tran2H(x,y):
 
 def rot2H(a):
     return np.array([[cos(a),-sin(a),0],[sin(a),cos(a),0],[0,0,1]])
-
-def draw_arrow(x,y,θ,L,col='darkblue',w=1):
-    plot2D(tran2H(x,y)@rot2H(θ)@arrow2H(L),col,w)
-
-def plot2D(M,col='black',w=1):
-    plt.plot(M[0, :], M[1, :], col, linewidth = w) 
-
-
-def arrow2H(L):
-    e=0.2
-    return add1(L*np.array([[0,1,1-e,1,1-e],[0,0,-e,0,e]]))
-
-def draw_disk(ax,c,r,col,alph=0.7,w=1):
-    #draw_disk(ax,array([[1],[2]]),0.5,"blue")
-    e = Ellipse(xy=c, width=2*r, height=2*r, angle=0,linewidth = w)   
-    ax.add_artist(e)
-    e.set_clip_box(ax.bbox)
-    e.set_alpha(alph)  # transparency
-    e.set_facecolor(col)
 
 #-------------------------------
    
@@ -110,31 +77,6 @@ def regulateur (x,q,a,b):
    # print(u)
     return u,m
 
-#------------------Visualization-------------------
-"""
-def draw_saildrone(x,u,ψ,awind,ψ_ap,a_ap,fr,fs,ff):
-    mx,my,θ,v,w,δs=list(x[0:6,0])
-    u1,u2=list(u[0:2,0])
-    hull=add1(np.array([[-1,5,7,7,5,-1,-1,-1],[-2,-2,-1,1,2,2,-2,-2]]))
-    sail=np.array([[-5,2.5],[0,0],[1,1]])
-    rudder=np.array([[-1,1],[0,0],[1,1]])
-    R=tran2H(mx,my)@rot2H(θ)
-    Rs=tran2H(3,0)@rot2H(δs)
-    Rf=tran2H(-6,0)@rot2H(-u2)
-    Rr=tran2H(-1,0)@rot2H(u1)
-    draw_arrow(17,17,ψ,5*awind,'red')
-    draw_arrow(17,17,ψ_ap+θ,5*a_ap,'green')
-    plot2D(R@Rs@Rf@rot2H(-np.pi/2)@arrow2H(ff),'blue')
-    plot2D(R@Rs@rot2H(-np.pi/2)@arrow2H(0.001*fs),'blue')
-    plot2D(R@Rr@rot2H(np.pi/2)@arrow2H(0.001*fr),'blue')
-    draw_disk(ax,R@np.array([[3],[0],[1]]),0.5,"red")
-    plot2D(R@hull,'black');
-    plot2D(R@Rs@sail,'red',2);
-    plot2D(R@Rr@rudder,'red',2);
-    plot2D(R@Rs@Rf@rudder,'green',2);
-"""
-
-#--------------------------------------------------
 
 ## Partie ROS
 
