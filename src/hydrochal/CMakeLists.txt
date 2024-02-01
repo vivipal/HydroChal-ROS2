@@ -40,7 +40,13 @@ ament_python_install_package(${PROJECT_NAME})
 
 install(PROGRAMS
   src/Rudder.py
+  src/regulation.py
   DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY
+  launch
+  DESTINATION share/${PROJECT_NAME}/
 )
 
 if(BUILD_TESTING)
