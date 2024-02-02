@@ -40,6 +40,7 @@ ament_python_install_package(${PROJECT_NAME})
 
 install(PROGRAMS
   src/Rudder.py
+  src/Flap.py
   src/regulation.py
   src/untitled.py
   src/test.py
