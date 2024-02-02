@@ -5,6 +5,8 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <ctime>
+
 
 class IMUNode : public rclcpp::Node {
   public:
@@ -39,12 +41,16 @@ int main(int argc, char const *argv[]) {
   rclcpp::init(argc,argv);
   auto n = std::make_shared<IMUNode>();
 
+  int c = 0;
 
   std::string line;
   std::getline(serialStream, line);
   while (rclcpp::ok()) {
+
     std::getline(serialStream, line);
+    std::cout << line << std::endl;
     if (!line.empty()){
+      c++;
 
       std::vector<std::string> values;
       std::stringstream ss(line);
@@ -60,7 +66,11 @@ int main(int argc, char const *argv[]) {
       std::getline(ss,val,',');
       msg.roll = std::stof(val);
 
-      n->publisher_->publish(msg);
+
+      if ( c >= 5){
+        n->publisher_->publish(msg);
+        c = 0;
+      }
 
 
 
