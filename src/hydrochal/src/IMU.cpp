@@ -19,20 +19,26 @@ class IMUNode : public rclcpp::Node {
 
 int main(int argc, char const *argv[]) {
 
-  rclcpp::init(argc,argv);
-  auto n = std::make_shared<IMUNode>();
+  if (argc != 2) {
+    std::cerr << "Please provide IMU device path" << std::endl;
+    return 1;
+  }
 
+  std::string device_path = argv[1];
 
-
-  const char* device = "/dev/ttyUSB1"; // Path to the serial device
-  std::ifstream serialStream(device);
+  std::ifstream serialStream(device_path);
 
   if (!serialStream.is_open()) {
     std::cerr << "Error opening serial port" << std::endl;
     return 1;
   }else{
-    std::cout << "Serial port openned" << '\n';
+    std::cout << "Serial port openned: " << device_path << '\n';
   }
+
+
+  rclcpp::init(argc,argv);
+  auto n = std::make_shared<IMUNode>();
+
 
   std::string line;
   std::getline(serialStream, line);
