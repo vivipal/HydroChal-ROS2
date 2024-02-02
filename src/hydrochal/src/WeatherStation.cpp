@@ -9,6 +9,8 @@
 #include <sstream>
 
 
+#include <stdexcept>
+
 class WeatherStationNode : public rclcpp::Node {
   public:
      WeatherStationNode() : Node("weather_station_node") {
@@ -68,16 +70,25 @@ interfaces::msg::HEADING getHEADINGmsg(std::vector<std::string> values){
 
 int main(int argc, char const *argv[]) {
 
-  rclcpp::init(argc,argv);
-  auto n = std::make_shared<WeatherStationNode>();
+  if (argc != 2) {
+    std::cerr << "Please provide Weather Station device path" << std::endl;
+    return 1;
+  }
 
-  const char* device = "/dev/ttyUSB0"; // Path to your serial device
-  std::ifstream serialStream(device);
+  std::string device_path = argv[1];
+
+  std::ifstream serialStream(device_path);
 
   if (!serialStream.is_open()) {
     std::cerr << "Error opening serial port" << std::endl;
     return 1;
+  }else{
+    std::cout << "Serial port openned: " << device_path << '\n';
   }
+
+  rclcpp::init(argc,argv);
+  auto n = std::make_shared<WeatherStationNode>();
+
 
 
   std::string line;
@@ -94,7 +105,7 @@ int main(int argc, char const *argv[]) {
       while (std::getline(ss, val, ',')) {
         values.push_back(val);
       }
-
+      try{
       if (values[0]=="$GPRMC") {
         interfaces::msg::GPS msg = getGPSmsg(values);
         n->gps_publisher_->publish(msg);
@@ -107,7 +118,10 @@ int main(int argc, char const *argv[]) {
         interfaces::msg::HEADING msg = getHEADINGmsg(values);
         n->heading_publisher_->publish(msg);
       }
-
+      }	catch (const std::exception& e) // reference to the base of a polymorphic object
+{
+    std::cout << e.what(); // information from length_error printed
+}
     }
   }
 

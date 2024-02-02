@@ -5,8 +5,6 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
-#include <ctime>
-
 
 class IMUNode : public rclcpp::Node {
   public:
@@ -21,36 +19,26 @@ class IMUNode : public rclcpp::Node {
 
 int main(int argc, char const *argv[]) {
 
-  if (argc != 2) {
-    std::cerr << "Please provide IMU device path" << std::endl;
-    return 1;
-  }
+  rclcpp::init(argc,argv);
+  auto n = std::make_shared<IMUNode>();
 
-  std::string device_path = argv[1];
 
-  std::ifstream serialStream(device_path);
+
+  const char* device = "/dev/ttyUSB1"; // Path to the serial device
+  std::ifstream serialStream(device);
 
   if (!serialStream.is_open()) {
     std::cerr << "Error opening serial port" << std::endl;
     return 1;
   }else{
-    std::cout << "Serial port openned: " << device_path << '\n';
+    std::cout << "Serial port openned" << '\n';
   }
-
-
-  rclcpp::init(argc,argv);
-  auto n = std::make_shared<IMUNode>();
-
-  int c = 0;
 
   std::string line;
   std::getline(serialStream, line);
   while (rclcpp::ok()) {
-
     std::getline(serialStream, line);
-    std::cout << line << std::endl;
     if (!line.empty()){
-      c++;
 
       std::vector<std::string> values;
       std::stringstream ss(line);
@@ -66,11 +54,7 @@ int main(int argc, char const *argv[]) {
       std::getline(ss,val,',');
       msg.roll = std::stof(val);
 
-
-      if ( c >= 5){
-        n->publisher_->publish(msg);
-        c = 0;
-      }
+      n->publisher_->publish(msg);
 
 
 
