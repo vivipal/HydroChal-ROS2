@@ -7,7 +7,7 @@ import sys
 def flap_callback(msg, serial_port):
     # Contrôler le flap en fonction de la valeur du message reçu
     # print("cmd_flap received: ", msg.data)
-    cmd_flap = int(1500 + 500*(msg.data/30.0))
+    cmd_flap = int(1500 - 500*(msg.data/30.0))
     cmd_flap = str(max(1000, min(2000, cmd_flap)))+ "\n"
     serial_port.write(cmd_flap.encode('utf-8'))
 
