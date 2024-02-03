@@ -14,7 +14,6 @@ COLOR_HORIZON = (0, 255, 0)  # GREEN
 COLOR_WINDOW = (255, 0, 255)  # PURPLE
 
 
-
 def take_top_n(indices, n_top, top_distance=5):
     # top_distance corresponds to the minimum distance in pixels between 2 tops
 
@@ -184,7 +183,7 @@ class TrackingWindow:
         return *(self.center * output_scale).flatten(), *(self.size * output_scale).flatten()
 
 
-class VideoProccessor:
+class VideoProcessor:
     def __init__(self):
         # Define the downscale factor
         self.downscale_factor = 2
@@ -216,13 +215,13 @@ class VideoProccessor:
         self.old_frame = None
         self.points_old_frame = []
 
-    def proccess(self, source_frame):
+    def process(self, source_frame, debug=False):
         # Get image dimensions
         source_height, source_width, *_ = source_frame.shape
         height = source_height // self.downscale_factor
         width = source_width // self.downscale_factor
 
-        # Initialize the tracking_window if neccessary
+        # Initialize the tracking_window if necessary
         if self.tracking_window is None:
             self.tracking_window = TrackingWindow(height, width)
 
@@ -230,30 +229,32 @@ class VideoProccessor:
         frame_bgr = cv2.resize(source_frame, (width, height))
         frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
-        # Draw points and line on a separate image
+        # Draw points and line on a separate image (for debugging only)
         canvas = source_frame.copy()
 
         # Estimate a line for the horizon
         hpx, hpy, border_y, horizontal_mask = self.horizon_estimator.compute(frame)
 
-        # Scatter gradient points on the image
-        for (x, y) in zip(hpx, hpy):
-            cv2.circle(canvas, (int(self.downscale_factor * x), int(self.downscale_factor * y)), 3, COLOR_HP, -1)
-
-        # Draw the horizontal line on the image
-        border_x = np.array([[[0.]], [[width - 1.]]])
-        ransac_points = np.concatenate((border_x, border_y), axis=2).astype(np.int32)
-        cv2.polylines(canvas, [ransac_points * self.downscale_factor], isClosed=False, color=COLOR_HORIZON, thickness=2)
+        if debug:  # DRAW gradients points and horizon
+            # Scatter gradient points on the image
+            for (x, y) in zip(hpx, hpy):
+                cv2.circle(canvas, (int(self.downscale_factor * x), int(self.downscale_factor * y)), 3, COLOR_HP, -1)
+            # Draw the horizontal line on the image
+            border_x = np.array([[[0.]], [[width - 1.]]])
+            ransac_points = np.concatenate((border_x, border_y), axis=2).astype(np.int32)
+            cv2.polylines(canvas, [ransac_points * self.downscale_factor],
+                          isClosed=False, color=COLOR_HORIZON, thickness=2)
 
         if (self.old_frame is not None) and (self.points_old_frame is not None):
             points_new_frame, status, err = cv2.calcOpticalFlowPyrLK(self.old_frame, frame,
                                                                      self.points_old_frame,
                                                                      None, **self.lk_params)
 
-            for p0, p1 in zip(self.points_old_frame[status == 1], points_new_frame[status == 1]):
-                x0, y0 = (self.downscale_factor * p0).ravel()
-                x1, y1 = (self.downscale_factor * p1).ravel()
-                cv2.line(canvas, (int(x1), int(y1)), (int(x0), int(y0)), COLOR_OF, 3)
+            if debug:  # DRAW optical flow
+                for p0, p1 in zip(self.points_old_frame[status == 1], points_new_frame[status == 1]):
+                    x0, y0 = (self.downscale_factor * p0).ravel()
+                    x1, y1 = (self.downscale_factor * p1).ravel()
+                    cv2.line(canvas, (int(x1), int(y1)), (int(x0), int(y0)), COLOR_OF, 3)
 
         # Current frame becomes the old one
         self.old_frame = frame.copy()
@@ -271,22 +272,23 @@ class VideoProccessor:
         self.points_old_frame = cv2.goodFeaturesToTrack(frame, mask=mask, **self.features_params)
 
         wx, wy, wsx, wsy = self.tracking_window.update(self.points_old_frame, self.downscale_factor)
-        cv2.rectangle(canvas, (int(wx-wsx), int(wy-wsy)), (int(wx+wsx), int(wy+wsy)), COLOR_WINDOW, thickness=2)
 
-        debug = cv2.cvtColor(mask * 255, cv2.COLOR_GRAY2BGR)
-        debug = cv2.resize(debug, (source_width, source_height))
-
-        # Stack images vertically or horizontally
-        layout = np.vstack((canvas, debug)) if height < width else np.hstack((canvas, debug))
-
-        # Show lower part of layout
-        cv2.imshow('Canvas & Debug', layout)
-        cv2.waitKey(1)
-
-        # TODO : using depth_map
         x0 = max(0, int(wx - wsx))
         x1 = min(int(wx + wsx), source_width)
         y0 = max(0, int(wy - wsy))
         y1 = min(int(wy + wsy), source_height)
+
+        if debug:  # DRAW tracking window and show layout
+            cv2.rectangle(canvas, (x0, y0), (x1, y1), COLOR_WINDOW, thickness=2)
+
+            debug = cv2.cvtColor(mask * 255, cv2.COLOR_GRAY2BGR)
+            debug = cv2.resize(debug, (source_width, source_height))
+
+            # Stack images vertically or horizontally
+            layout = np.vstack((canvas, debug)) if height < width else np.hstack((canvas, debug))
+
+            # Show lower part of layout
+            cv2.imshow('Canvas & Debug', layout)
+            cv2.waitKey(1)
 
         return x0, x1, y0, y1

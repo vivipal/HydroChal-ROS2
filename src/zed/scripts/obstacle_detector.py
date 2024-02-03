@@ -10,7 +10,7 @@ from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
 from stereo_msgs.msg import DisparityImage
 
-from tools import VideoProccessor, EPSILON
+from tools import VideoProcessor, EPSILON
 
 DEBUG = False
 
@@ -30,11 +30,11 @@ class ObstacleDetector(Node):
         self.depth_map = None
 
         self.bridge = CvBridge()
-        self.video_proccessor = VideoProccessor()
+        self.video_processor = VideoProcessor()
     
     def detection_callback(self):
         if (self.stereo_left is not None) and (self.depth_map is not None):
-            w0, w1, h0, h1 = self.video_proccessor.proccess(self.stereo_left)
+            w0, w1, h0, h1 = self.video_processor.process(self.stereo_left, debug=True)
 
             window = self.depth_map[h0:h1, w0:w1]
             # only consider distances smaller than 30m
@@ -70,13 +70,15 @@ class ObstacleDetector(Node):
             left_gray = cv2.cvtColor(self.stereo_left, cv2.COLOR_BGR2GRAY).reshape(h, w, 1)
             normalized_disparity = ((bounded_disparity - min_disparity) * (255. / max_disparity))
 
-            layout = np.concatenate((left_gray, left_gray, normalized_disparity.astype(np.uint8).reshape(h, w, 1)), axis=2)
+            layout = np.concatenate((left_gray, left_gray,
+                                     normalized_disparity.astype(np.uint8).reshape(h, w, 1)),
+                                    axis=2)
             cv2.imshow('Image/Disparity', layout)
 
 
 def main():
     rclpy.init()
-    obstacle_detector = ObstacleDetector(update_rate=8.)
+    obstacle_detector = ObstacleDetector(update_rate=8)  # in Hz
 
     rclpy.spin(obstacle_detector)
 
