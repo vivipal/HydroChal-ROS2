@@ -2,65 +2,57 @@
 //
 // Copyright (c) 2021, STEREOLABS.
 //
-// All rights reserved.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
 ///////////////////////////////////////////////////////////////////////////
 
 // ----> Includes
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <csignal>
 
 #include "videocapture.hpp"
 
 // OpenCV includes
 #include <opencv2/opencv.hpp>
+#include <cv_bridge/cv_bridge.h>
 
 // Sample includes
 #include "calibration.hpp"
 #include "stopwatch.hpp"
 #include "stereo.hpp"
 #include "ocv_display.hpp"
+
+// ROS includes
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/image.hpp>
+#include <stereo_msgs/msg/disparity_image.hpp>
 // <---- Includes
 
 #define USE_OCV_TAPI // Comment to use "normal" cv::Mat instead of CV::UMat
-#define USE_HALF_SIZE_DISP // Comment to compute depth matching on full image frames
+// #define USE_HALF_SIZE_DISP // Comment to compute depth matching on full image frames
 
-#include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/image.hpp>
-#include <cv_bridge/cv_bridge.h>
-
-#include <csignal>
 
 void signalHandler(int signum)
 {
-    if (signum == SIGINT) {
+    if (signum == SIGINT) 
         rclcpp::shutdown();
-    }
 }
 
-class StereoPublisher : public rclcpp::Node
+class VideoPublisher : public rclcpp::Node
 {
 public:
-    StereoPublisher() : Node("stereo_publisher")
+    VideoPublisher() : Node("zed_video_publisher")
     {
-        publisher_ = this->create_publisher<sensor_msgs::msg::Image>("stereo_stream", 10);
+        stereo_publisher_ = this->create_publisher<sensor_msgs::msg::Image>("stereo_stream", 10);
+        disparity_publisher_ = this->create_publisher<stereo_msgs::msg::DisparityImage>("disparity_stream", 10);
     }
 
-    void publish_image(const cv::UMat& umat_frame)
+    void publish_stereo(const cv::UMat& umat_left, const cv::UMat& umat_right)
     {
+        // Stack frames horizontally
+        cv::UMat umat_frame;
+        cv::hconcat(umat_left, umat_right, umat_frame);
+
         // Convert UMat to Mat
         cv::Mat frame = umat_frame.getMat(cv::ACCESS_READ);
 
@@ -68,31 +60,48 @@ public:
         auto image_msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", frame).toImageMsg();
 
         // Publish the image message
-        publisher_->publish(*image_msg);
+        stereo_publisher_->publish(*image_msg);
+    }
+
+    void publish_disparity(const cv::UMat& umat_frame, double f, double t, double min_disparity, double max_disparity)
+    {
+        // Convert UMat to Mat
+        cv::Mat frame = umat_frame.getMat(cv::ACCESS_READ);
+
+        // Convert OpenCV image to ROS message
+        auto image_msg = cv_bridge::CvImage(std_msgs::msg::Header(), "32FC1", frame).toImageMsg();
+
+        // Create and fill a Disparity Image object
+        stereo_msgs::msg::DisparityImage msg;
+        msg.image = *image_msg;
+        msg.f = f;
+        msg.t = t;
+        msg.min_disparity = min_disparity;
+        msg.max_disparity = max_disparity;
+
+        // Publish the disparity image message
+        disparity_publisher_->publish(msg);
     }
 
 private:
-    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_;
-    cv::VideoCapture cap_;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr stereo_publisher_;
+    rclcpp::Publisher<stereo_msgs::msg::DisparityImage>::SharedPtr disparity_publisher_;
 };
 
 
 int main(int argc, char *argv[])
 {
-    rclcpp::init(argc, argv);
     signal(SIGINT, signalHandler);
-    StereoPublisher stereo_publisher;
+    
+    rclcpp::init(argc, argv);
+    auto video_publisher = std::make_shared<VideoPublisher>();
 
     sl_oc::VERBOSITY verbose = sl_oc::VERBOSITY::INFO;
 
     // ----> Set Video parameters
     sl_oc::video::VideoParams params;
-#ifdef EMBEDDED_ARM
     params.res = sl_oc::video::RESOLUTION::VGA;
-#else
-    params.res = sl_oc::video::RESOLUTION::HD720;
-#endif
-    params.fps = sl_oc::video::FPS::FPS_30;
+    params.fps = sl_oc::video::FPS::FPS_15;
     params.verbose = verbose;
     // <---- Set Video parameters
 
@@ -122,7 +131,7 @@ int main(int argc, char *argv[])
     std::cout << "Calibration file found. Loading..." << std::endl;
 
     // ----> Frame size
-    int w,h;
+    int w, h;
     cap.getFrameSize(w,h);
     // <---- Frame size
 
@@ -224,7 +233,6 @@ int main(int argc, char *argv[])
             // <---- Extract left and right images from side-by-side
 
             // ----> Apply rectification
-            sl_oc::tools::StopWatch remap_clock;
 #ifdef USE_OCV_TAPI
             cv::remap(left_raw, left_rect, map_left_x_gpu, map_left_y_gpu, cv::INTER_AREA );
             cv::remap(right_raw, right_rect, map_right_x_gpu, map_right_y_gpu, cv::INTER_AREA );
@@ -232,13 +240,9 @@ int main(int argc, char *argv[])
             cv::remap(left_raw, left_rect, map_left_x, map_left_y, cv::INTER_AREA );
             cv::remap(right_raw, right_rect, map_right_x, map_right_y, cv::INTER_AREA );
 #endif
-            double remap_elapsed = remap_clock.toc();
-            std::stringstream remapElabInfo;
-            remapElabInfo << "Rectif. processing: " << remap_elapsed << " sec - Freq: " << 1./remap_elapsed;
             // <---- Apply rectification
 
             // ----> Stereo matching
-            sl_oc::tools::StopWatch stereo_clock;
             double resize_fact = 1.0;
 #ifdef USE_HALF_SIZE_DISP
             resize_fact = 0.5;
@@ -250,7 +254,7 @@ int main(int argc, char *argv[])
             right_for_matcher = right_rect; // No data copy
 #endif
             // Apply stereo matching
-            left_matcher->compute(left_for_matcher, right_for_matcher,left_disp_half);
+            left_matcher->compute(left_for_matcher, right_for_matcher, left_disp_half);
 
             left_disp_half.convertTo(left_disp_float,CV_32FC1);
             cv::multiply(left_disp_float,1./16.,left_disp_float); // Last 4 bits of SGBM disparity are decimal
@@ -262,39 +266,15 @@ int main(int argc, char *argv[])
 #else
             left_disp = left_disp_float;
 #endif
-
-            double elapsed = stereo_clock.toc();
-            std::stringstream stereoElabInfo;
-            stereoElabInfo << "Stereo processing: " << elapsed << " sec - Freq: " << 1./elapsed;
             // <---- Stereo matching
 
-            // ----> Show frames
-            sl_oc::tools::showImage("Right rect.", right_rect, params.res,true, remapElabInfo.str());
-            sl_oc::tools::showImage("Left rect.", left_rect, params.res,true, remapElabInfo.str());
-            // <---- Show frames
+            // ----> Publish stereo frames
+            video_publisher->publish_stereo(left_rect, right_rect);
+            // <---- Publish stereo frames
 
-            // ----> Show disparity image
-            cv::add(left_disp_float,-static_cast<double>(stereoPar.minDisparity-1),left_disp_float); // Minimum disparity offset correction
-            cv::multiply(left_disp_float,1./stereoPar.numDisparities,left_disp_image,255., CV_8UC1 ); // Normalization and rescaling
-
-            cv::applyColorMap(left_disp_image,left_disp_image,cv::COLORMAP_JET); // COLORMAP_INFERNO is better, but it's only available starting from OpenCV v4.1.0
-
-            sl_oc::tools::showImage("Disparity", left_disp_image, params.res,true, stereoElabInfo.str());
-            // <---- Show disparity image
-
-            stereo_publisher.publish_image(left_disp_image);
-
-            // ----> Extract Depth map
-            // The DISPARITY MAP can be now transformed in DEPTH MAP using the formula
-            // depth = (f * B) / disparity
-            // where 'f' is the camera focal, 'B' is the camera baseline, 'disparity' is the pixel disparity
-
-            double num = static_cast<double>(fx*baseline);
-            cv::divide(num,left_disp_float,left_depth_map);
-
-            float central_depth = left_depth_map.getMat(cv::ACCESS_READ).at<float>(left_depth_map.rows/2, left_depth_map.cols/2 );
-            std::cout << "Depth of the central pixel: " << central_depth << " mm" << std::endl;
-            // <---- Extract Depth map
+            // ----> Publish disparity image
+            video_publisher->publish_disparity(left_disp_float, fx, baseline, stereoPar.minDisparity, stereoPar.numDisparities);
+            // <---- Publish disparity image
         }
     }
 

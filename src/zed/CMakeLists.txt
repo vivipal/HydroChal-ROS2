@@ -121,6 +121,7 @@ install(TARGETS ${PROJECT_NAME}
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(stereo_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
 
@@ -128,16 +129,15 @@ find_package(image_transport REQUIRED)
 set(dependencies
   rclcpp
   sensor_msgs
+  stereo_msgs
   cv_bridge
   image_transport
 )
 
 ##### OpenCV is required
+find_package(OpenMP)
 find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
-
-##### Depth Example
-find_package(OpenMP)
 
 set(DEPTH_STEREO ${PROJECT_NAME}_depth_stereo)
 include_directories( ${PROJECT_SOURCE_DIR}/include)
@@ -161,23 +161,36 @@ endif()
 
 ament_target_dependencies(${DEPTH_STEREO} ${dependencies})
 
-# Install C++ executable
+# Install C++ executables
 install(TARGETS
   ${DEPTH_STEREO}
   DESTINATION lib/${PROJECT_NAME}
 )
 
 # Build Python nodes
-# ament_python_install_package(${PROJECT_NAME})
-# install(PROGRAMS
-#   scripts/image_stream_consumer.py
-#   DESTINATION lib/${PROJECT_NAME}
-# )
+ament_python_install_package(scripts)
+install(PROGRAMS
+  scripts/obstacle_detector.py
+  scripts/tools.py
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 # Install launch files
 install(DIRECTORY
   launch
   DESTINATION share/${PROJECT_NAME}/
 )
+
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+  # the following line skips the linter which checks for copyrights
+  # comment the line when a copyright and license is added to all source files
+  set(ament_cmake_copyright_FOUND TRUE)
+  # the following line skips cpplint (only works in a git repo)
+  # comment the line when this package is in a git repo and when
+  # a copyright and license is added to all source files
+  set(ament_cmake_cpplint_FOUND TRUE)
+  ament_lint_auto_find_test_dependencies()
+endif()
 
 ament_package()
