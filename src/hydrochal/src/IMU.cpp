@@ -3,9 +3,6 @@
 #include "interfaces/msg/ypr.hpp"
 
 #include <iostream>
-#include <fstream>
-#include <sstream>
-#include <ctime>
 #include <fcntl.h> 
 #include <termios.h> 
 
