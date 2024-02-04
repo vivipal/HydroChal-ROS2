@@ -215,7 +215,7 @@ class VideoProcessor:
         self.old_frame = None
         self.points_old_frame = []
 
-    def process(self, source_frame, debug=False):
+    def process(self, source_frame, draw_strategy=False):
         # Get image dimensions
         source_height, source_width, *_ = source_frame.shape
         height = source_height // self.downscale_factor
@@ -235,7 +235,7 @@ class VideoProcessor:
         # Estimate a line for the horizon
         hpx, hpy, border_y, horizontal_mask = self.horizon_estimator.compute(frame)
 
-        if debug:  # DRAW gradients points and horizon
+        if draw_strategy:  # DRAW gradients points and horizon
             # Scatter gradient points on the image
             for (x, y) in zip(hpx, hpy):
                 cv2.circle(canvas, (int(self.downscale_factor * x), int(self.downscale_factor * y)), 3, COLOR_HP, -1)
@@ -250,7 +250,7 @@ class VideoProcessor:
                                                                      self.points_old_frame,
                                                                      None, **self.lk_params)
 
-            if debug:  # DRAW optical flow
+            if draw_strategy:  # DRAW optical flow
                 for p0, p1 in zip(self.points_old_frame[status == 1], points_new_frame[status == 1]):
                     x0, y0 = (self.downscale_factor * p0).ravel()
                     x1, y1 = (self.downscale_factor * p1).ravel()
@@ -278,7 +278,7 @@ class VideoProcessor:
         y0 = max(0, int(wy - wsy))
         y1 = min(int(wy + wsy), source_height)
 
-        if debug:  # DRAW tracking window and show layout
+        if draw_strategy:  # DRAW tracking window and show layout
             cv2.rectangle(canvas, (x0, y0), (x1, y1), COLOR_WINDOW, thickness=2)
 
             debug = cv2.cvtColor(mask * 255, cv2.COLOR_GRAY2BGR)
