@@ -4,6 +4,7 @@
 
 #include <iostream>
 #include <fcntl.h> 
+#include <ostream>
 #include <termios.h> 
 
 
@@ -46,10 +47,17 @@ void receive_message(int fd,char *receivedMessage){
   bool end_message = false;
   char buffer[2];
   while (!end_message){
-    read(fd,buffer,1);
+    int a; 
+    do {
+       a = read(fd,buffer,1);
+    } while(a < 1);
+
+    
+    // std:: cout << a << std::flush;
     if (*buffer=='\n'){
       end_message = true;
     }else{
+      // std::cout <<buffer[0] << " " << std::flush; 
       strcat(receivedMessage,buffer);
     }
   }
@@ -79,7 +87,7 @@ int main(int argc, char const *argv[]) {
 
   std::string device_path = argv[1];
 
-  int fd = open(device_path.c_str(), O_RDONLY | O_NOCTTY  );
+  int fd = open(device_path.c_str(), O_RDONLY | O_NOCTTY | O_NDELAY );
   if (fd < 0) {
     std::cerr << "Error opening serial port: " << device_path << std::endl;
     return 1;
@@ -103,7 +111,7 @@ int main(int argc, char const *argv[]) {
 
     if (sscanf(receivedMessage, "YPR=%lf,%lf,%lf", &yaw, &pitch, &roll) == 3) {
 
-      // std::cout << "Yaw: " << yaw << ", Pitch: " << pitch << ", Roll: " << roll << std::endl;
+      std::cout << "Yaw: " << yaw << ", Pitch: " << pitch << ", Roll: " << roll << std::endl;
       
       interfaces::msg::YPR msg;
       msg.yaw = yaw;
@@ -113,7 +121,7 @@ int main(int argc, char const *argv[]) {
       n->publisher_->publish(msg);
     }else{
       std::cerr << "Error parsing values from the line: " << std::endl;
-      std::cout <<  std::endl << "----\n";
+      std::cout << receivedMessage << std::endl << "----\n";
     }
   }
 
