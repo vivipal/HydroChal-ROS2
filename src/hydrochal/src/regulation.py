@@ -16,7 +16,6 @@ from interfaces.msg import regulation
 #ROBLIB
 
 
-
 def angle(x):
     x=x.flatten()
     return np.arctan2(x[1],x[0])

@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 import rclpy
-from std_msgs.msg import Int32
+from std_msgs.msg import Float32
 import pigpio
 
 
 def servo_callback(msg, pi, pin):
     # Contrôler le servo en fonction de la valeur du message reçu
-    global last_cmd_sent
-    cmd = msg.data
-    if (abs(cmd-last_cmd_sent)>50):     # minimum de mouvement
+    global last_angle_sent  # en deg
+    angle_safran = max(-55, min(55, msg.data))
+    # print("cmd received : ", msg.data)
+    cmd = int(1497 +8.17*angle_safran -0.0187*angle_safran**2)
+    cmd = max(1000, min(2000, cmd))
+    if (abs(angle_safran-last_angle_sent)>2.5):     # minimum de mouvement de 5deg
         # print("cmd sent : ",cmd)
         pi.set_servo_pulsewidth(pin, cmd)
-        last_cmd_sent = cmd
+        last_angle_sent = angle_safran
 
 def main():
     rclpy.init()
@@ -23,11 +26,12 @@ def main():
     MAX_WIDTH=2000
 
     pi = pigpio.pi()
-    global last_cmd_sent
-    last_cmd_sent = 1500
+    global last_angle_sent # en deg
+    pi.set_servo_pulsewidth(NUM_GPIO, 0)
+    last_angle_sent = 0
 
-    # Créer un abonné pour le topic "/cmd_safran"
-    subscription = node.create_subscription(Int32, '/cmd_safran', lambda msg: servo_callback(msg, pi, NUM_GPIO), 10)
+    # Créer un abonné pour le topic "/cmd_safran" en deg
+    subscription = node.create_subscription(Float32, '/cmd_rudder', lambda msg: servo_callback(msg, pi, NUM_GPIO), 10)
 
     try:
         rclpy.spin(node)

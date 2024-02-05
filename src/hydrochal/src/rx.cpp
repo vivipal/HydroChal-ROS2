@@ -3,6 +3,7 @@
 #include "interfaces/msg/command.hpp"
 
 #include "SBUS.h"
+#include <fstream>
 
 #include <iostream>
 #include <chrono>
@@ -43,18 +44,32 @@ static void onPacket(const sbus_packet_t &packet){
 
 
 int main(int argc, char const *argv[]) {
+  
+  if (argc != 2) {
+    std::cerr << "Please provide RX device path" << std::endl;
+    return 1;
+  }
+
+  std::string device_path = argv[1];
+
+  std::ifstream serialStream(device_path);
+
+  if (!serialStream.is_open()) {
+    std::cerr << "Error opening serial port" << std::endl;
+    return 1;
+  }else{
+    std::cout << "Serial port openned: " << device_path << '\n';
+  }
+
 
   rclcpp::init(argc,argv);
   auto n = std::make_shared<RXNode>();
 
 
-
-  std::string ttydevice = "/dev/ttyAMA1";
-
   // initialisation of sbus
   static SBUS sbus;
   sbus.onPacket(onPacket);
-  sbus_err_t err = sbus.install(ttydevice.c_str(), true);  // true for blocking mode
+  sbus_err_t err = sbus.install(device_path.c_str(), true);  // true for blocking mode
   if (err != SBUS_OK){
       std::cerr << "SBUS install error: " << err << std::endl;
       return err;
