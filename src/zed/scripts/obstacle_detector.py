@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from cv_bridge import CvBridge
 
+from interfaces.msg import WideObstacle
 from stereo_msgs.msg import DisparityImage
 from sensor_msgs.msg import Image, CameraInfo
 
@@ -23,6 +24,8 @@ class ObstacleDetector(Node):
 
         # Create a timer with a callback function and a period of 1 / update_rate
         self.processing_timer = self.create_timer(1. / update_rate, self.processing_callback)
+
+        self.obstacle_publisher = self.create_publisher(WideObstacle, 'detected_obstacle', 10)
 
         self.image_left = None
         self.depth_map = None
@@ -46,14 +49,17 @@ class ObstacleDetector(Node):
                 tx = -self.d_stereo / 2.  # left camera
                 z = np.median(valid_distances)
 
+                obstacle = WideObstacle()
+
                 # Expressed coordinates in the centered frame (in between the 2 cameras)
-                x0 = ((w0 - self.cx) * z - tx) / self.focal_length
-                x1 = ((w1 - self.cx) * z - tx) / self.focal_length
+                obstacle.x_min = ((w0 - self.cx) * z - tx) / self.focal_length
+                obstacle.x_max = ((w1 - self.cx) * z - tx) / self.focal_length
 
-                y0 = (h0 - self.cy) * (z / self.focal_length)
-                y1 = (h1 - self.cy) * (z / self.focal_length)
+                obstacle.y_min = (h0 - self.cy) * (z / self.focal_length)
+                obstacle.y_max = (h1 - self.cy) * (z / self.focal_length)
 
-                # TODO : publish x0 y0 x1 y1 z using a custom ROS message
+                obstacle.z = float(z)
+                self.obstacle_publisher.publish(obstacle)
     
     def image_callback(self, msg):
         # Convert ROS image message to OpenCV image

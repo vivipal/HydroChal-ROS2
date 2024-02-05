@@ -124,6 +124,7 @@ find_package(sensor_msgs REQUIRED)
 find_package(stereo_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
+find_package(interfaces REQUIRED)
 
 # Set dependencies
 set(dependencies
@@ -132,6 +133,7 @@ set(dependencies
   stereo_msgs
   cv_bridge
   image_transport
+  interfaces
 )
 
 ##### OpenCV is required
