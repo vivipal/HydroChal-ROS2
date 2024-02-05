@@ -25,6 +25,7 @@
 // ROS includes
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include "sensor_msgs/msg/camera_info.hpp"
 #include <stereo_msgs/msg/disparity_image.hpp>
 // <---- Includes
 
@@ -43,16 +44,13 @@ class VideoPublisher : public rclcpp::Node
 public:
     VideoPublisher() : Node("zed_video_publisher")
     {
-        stereo_publisher_ = this->create_publisher<sensor_msgs::msg::Image>("stereo_stream", 10);
-        disparity_publisher_ = this->create_publisher<stereo_msgs::msg::DisparityImage>("disparity_stream", 10);
+        image_publisher_ = this->create_publisher<sensor_msgs::msg::Image>("stereo_left", 10);
+        disparity_publisher_ = this->create_publisher<stereo_msgs::msg::DisparityImage>("disparity_map", 10);
+        camera_info_publisher_ = this->create_publisher<sensor_msgs::msg::CameraInfo>("camera_info", 10);
     }
 
-    void publish_stereo(const cv::UMat& umat_left, const cv::UMat& umat_right)
+    void publish_image(const cv::UMat& umat_frame)
     {
-        // Stack frames horizontally
-        cv::UMat umat_frame;
-        cv::hconcat(umat_left, umat_right, umat_frame);
-
         // Convert UMat to Mat
         cv::Mat frame = umat_frame.getMat(cv::ACCESS_READ);
 
@@ -60,10 +58,10 @@ public:
         auto image_msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", frame).toImageMsg();
 
         // Publish the image message
-        stereo_publisher_->publish(*image_msg);
+        image_publisher_->publish(*image_msg);
     }
 
-    void publish_disparity(const cv::UMat& umat_frame, double f, double t, double min_disparity, double max_disparity)
+    void publish_disparity(const cv::UMat& umat_frame, double min_disparity, double max_disparity)
     {
         // Convert UMat to Mat
         cv::Mat frame = umat_frame.getMat(cv::ACCESS_READ);
@@ -74,8 +72,6 @@ public:
         // Create and fill a Disparity Image object
         stereo_msgs::msg::DisparityImage msg;
         msg.image = *image_msg;
-        msg.f = f;
-        msg.t = t;
         msg.min_disparity = min_disparity;
         msg.max_disparity = max_disparity;
 
@@ -83,9 +79,24 @@ public:
         disparity_publisher_->publish(msg);
     }
 
+    void publish_camera_info(const cv::Mat& P)
+    {
+        // Create CameraInfo message and fill in the fields
+        sensor_msgs::msg::CameraInfo camera_info_msg;
+        
+        // Fill in the P matrix (projection matrix) - assuming P is a 3x4 matrix
+        camera_info_msg.p = {P.at<double>(0, 0), P.at<double>(0, 1), P.at<double>(0, 2), P.at<double>(0, 3),
+                             P.at<double>(1, 0), P.at<double>(1, 1), P.at<double>(1, 2), P.at<double>(1, 3),
+                             P.at<double>(2, 0), P.at<double>(2, 1), P.at<double>(2, 2), P.at<double>(2, 3)};
+
+        // Publish CameraInfo message
+        camera_info_publisher_->publish(camera_info_msg);
+    }
+
 private:
-    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr stereo_publisher_;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_publisher_;
     rclcpp::Publisher<stereo_msgs::msg::DisparityImage>::SharedPtr disparity_publisher_;
+    rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_publisher_;
 };
 
 
@@ -268,13 +279,14 @@ int main(int argc, char *argv[])
 #endif
             // <---- Stereo matching
 
-            // ----> Publish stereo frames
-            video_publisher->publish_stereo(left_rect, right_rect);
-            // <---- Publish stereo frames
+            // Publish left stereo frame only
+            video_publisher->publish_image(left_rect);
 
-            // ----> Publish disparity image
-            video_publisher->publish_disparity(left_disp_float, fx, baseline, stereoPar.minDisparity, stereoPar.numDisparities);
-            // <---- Publish disparity image
+            // Publish disparity
+            video_publisher->publish_disparity(left_disp_float, stereoPar.minDisparity, stereoPar.numDisparities);
+            
+            // Publish right camera info (contains baseline information)
+            video_publisher->publish_camera_info(cameraMatrix_right);
         }
     }
 
