@@ -117,7 +117,11 @@ void receive_message(int fd,char *receivedMessage){
   bool end_message = false;
   char buffer[2];
   while (!end_message){
-    read(fd,buffer,1);
+    int a; 
+    do {
+       a = read(fd,buffer,1);
+    } while(a < 1);
+
     if (*buffer=='*'){
       end_message = true;
     }else{
