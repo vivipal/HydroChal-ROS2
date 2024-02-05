@@ -125,15 +125,41 @@ class Plannif_regulation(Node):
         
         self.yaw=0.0 # angle voile
 
+        # Reference point for cartesian projection to enu local plan
+        self.lat0 = 48.199184
+        self.lon0 = -3.014383
+    
+    def coord_to_cart(self, lat, lon):
+        # transform gps coordinates to x,y on local plan (East North Up frame)
+        # CONSTANTS
+        a = 6378137
+        b = 6356752.3142
+        e2 = 1 - (b/a)**2
+        # Location of reference point in radians
+        phi = self.lat0*np.pi/180
+        lam = self.lon0*np.pi/180
+        # Location of data points in radians
+        dphi= lat*np.pi/180 - phi
+        dlam= lon*np.pi/180 - lam
+        # Some useful definitions
+        tmp1 = np.sqrt(1-e2*np.sin(phi)**2)
+        cp = np.cos(phi)
+        sp = np.sin(phi)
+        # Transformations
+        de = (a/tmp1)*cp*dlam - (a*(1-e2)/(tmp1**3))*sp*dphi*dlam
+        dn = (a*(1-e2)/tmp1**3)*dphi + 1.5*cp*sp*a*e2*dphi**2 + 0.5*sp*cp*(a/tmp1)*dlam**2
+        return de, dn
+
     def coord_callback(self, msg : GPS):
-        self.P=msg.GPS
-        self.P = [msg.latitude,msg.longitude,msg.sog]
+        x, y = self.coord_to_cart(msg.latitude, msg.longitude)
+        self.P = [x,y,msg.sog]
 
     def wind_callback(self, msg : WIND):
         self.vent = [msg.true_wind_direction,msg.wind_direction,msg.wind_speed]
 
     def heading_callback(self, msg : HEADING):
         self.heading=msg.heading
+
     def yaw_callback(self, msg : YPR):
         self.yaw=msg.yaw
 
@@ -145,7 +171,7 @@ class Plannif_regulation(Node):
         x = np.array([self.P[0,0],self.P[1,0],self.heading,self.P[2,0],0,self.yaw]).reshape(6,1)   #x=(x,y,θ,v,w,δs)
         # COORDONEE DES LIGNES A SUIVRE
         
-        a = np.array([[75],[-75]])   
+        a = np.array([[75],[-75]])
         b = np.array([[-75],[-75]])
         c=np.array([-75,20]).reshape(2,1)
         d=np.array([-150,20]).reshape(2,1)
