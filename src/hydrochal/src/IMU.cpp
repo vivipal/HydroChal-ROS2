@@ -2,6 +2,7 @@
 
 #include "interfaces/msg/ypr.hpp"
 
+#include <chrono>
 #include <iostream>
 #include <fcntl.h> 
 #include <ostream>
@@ -103,6 +104,9 @@ int main(int argc, char const *argv[]) {
 
   double yaw, pitch,roll;
 
+  auto last_send = std::chrono::high_resolution_clock::now();
+  auto now = std::chrono::high_resolution_clock::now();
+
   while (rclcpp::ok()){
     wait_new_message(fd);
 
@@ -118,7 +122,15 @@ int main(int argc, char const *argv[]) {
       msg.pitch = pitch;
       msg.roll = roll;
 
-      n->publisher_->publish(msg);
+
+      auto duration = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - last_send);
+
+
+      if (duration.count() > 100000){
+        last_send = std::chrono::high_resolution_clock::now();
+        n->publisher_->publish(msg);
+      }
+
     }else{
       std::cerr << "Error parsing values from the line: " << std::endl;
       std::cout << receivedMessage << std::endl << "----\n";
