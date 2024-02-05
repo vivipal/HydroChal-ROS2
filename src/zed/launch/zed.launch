@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+
+import launch
+from launch import LaunchDescription
+from launch_ros.actions import Node
+
+def generate_launch_description():
+    return LaunchDescription([
+        # Launch zed_depth_stereo node
+        Node(
+            package='zed',
+            executable='zed_depth_stereo',
+            name='zed_depth_stereo',
+            output='screen',
+            parameters=[
+                # Add any parameters specific to zed_depth_stereo node if needed
+            ],
+        ),
+        # Launch obstacle_detector.py node
+        Node(
+            package='zed',
+            executable='obstacle_detector.py',
+            name='obstacle_detector',
+            output='screen',
+            prefix='python3',
+            parameters=[
+                # Add any parameters specific to obstacle_detector.py node if needed
+            ],
+        ),
+    ])

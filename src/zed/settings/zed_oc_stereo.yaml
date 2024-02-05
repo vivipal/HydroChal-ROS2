@@ -1,0 +1,13 @@
+%YAML:1.0
+---
+blockSize: 7
+minDisparity: 0
+numDisparities: 96
+mode: 2
+disp12MaxDiff: 96
+preFilterCap: 63
+uniquenessRatio: 5
+speckleWindowSize: 255
+speckleRange: 1
+minDepth_mm: 300.
+maxDepth_mm: 30000.
