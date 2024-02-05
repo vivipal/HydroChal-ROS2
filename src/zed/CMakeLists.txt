@@ -141,6 +141,8 @@ find_package(OpenMP)
 find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
+## depth_stereo C++ node
+
 set(DEPTH_STEREO ${PROJECT_NAME}_depth_stereo)
 include_directories( ${PROJECT_SOURCE_DIR}/include)
 add_executable(${DEPTH_STEREO} "${PROJECT_SOURCE_DIR}/src/zed_oc_depth_stereo.cpp")
@@ -163,9 +165,35 @@ endif()
 
 ament_target_dependencies(${DEPTH_STEREO} ${dependencies})
 
+## video_recorder C++ node
+
+set(VIDEO_RECORDER ${PROJECT_NAME}_video_recorder)
+include_directories( ${PROJECT_SOURCE_DIR}/include)
+add_executable(${VIDEO_RECORDER} "${PROJECT_SOURCE_DIR}/src/video_recorder.cpp")
+set_target_properties(${VIDEO_RECORDER} PROPERTIES PREFIX "")
+
+if(OpenMP_CXX_FOUND)
+    include_directories(${OpenMP_CXX_INCLUDE_DIRS})
+    SET(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+    target_link_libraries(${VIDEO_RECORDER}
+      OpenMP::OpenMP_CXX
+      ${PROJECT_NAME}
+      ${OpenCV_LIBS}
+    )
+else()
+    target_link_libraries(${VIDEO_RECORDER}
+      ${PROJECT_NAME}
+      ${OpenCV_LIBS}
+    )
+endif()
+
+ament_target_dependencies(${VIDEO_RECORDER} ${dependencies})
+
+
 # Install C++ executables
 install(TARGETS
   ${DEPTH_STEREO}
+  ${VIDEO_RECORDER}
   DESTINATION lib/${PROJECT_NAME}
 )
 
