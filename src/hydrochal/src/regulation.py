@@ -3,6 +3,8 @@ import numpy as np
 from numpy import cos,sin
 from numpy.linalg import norm,det
 
+import time
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32
@@ -11,17 +13,12 @@ from interfaces.msg import GPS
 from interfaces.msg import HEADING
 from interfaces.msg import YPR
 
-
-def sawtooth(x):
-    x = x+np.pi
-    return ((x + np.pi) % (2 * np.pi) - np.pi)/np.pi  # or equivalently   2*arctan(tan(x/2))
-
-
 R = 6378000 # earth radius in meter
 LAT_REF = 48.19924
 LON_REF = -3.01461 
 
-
+def sawtooth(x):
+    return ((x + np.pi) % (2 * np.pi) - np.pi) # or equivalently   2*arctan(tan(x/2))
 
 def coord2cart(coords,coords_ref=(LAT_REF,LON_REF)):
     '''
@@ -61,6 +58,11 @@ class regulationNode(Node):
         self.wp_passed = 0
         self.r = 10 # Taille couloirs:
 
+        self.gps_received = False
+        self.imu_received = False
+        self.wind_received  = False 
+        self.heading_received = False
+        
         self.coord_subscriber = self.create_subscription(GPS, '/GPS', self.coord_callback, 10)
         self.wind_subscriber = self.create_subscription(WIND, '/WIND', self.wind_callback, 10)
         self.heading_subscriber = self.create_subscription(HEADING, '/HEADING', self.heading_callback, 10)
@@ -77,111 +79,87 @@ class regulationNode(Node):
         self.heading = 0.0 # Cap véhicule 
         self.sail_yaw = 0.0 # angle voile
 
-        self.DELTA_R_MAX = 45
-        self.BETA = 0.5
-        self.ZETA = 0.2
+        self.DELTA_R_MAX = 55
+        self.BETA = 0.3
+        self.ZETA = np.pi/4
 
         self.awd = 0 
         self.twd = 0
       
-        self.lat = (0,0)
-        self.lon = (0,0)
+        self.lat = 0
+        self.lon = 0
         self.a, self.b = coord2cart(WPs[0]), coord2cart(WPs[1])
         self.waypoint_passed = 0
-        # self.update_line()
-
-        self.gps_received = False
-        self.imu_received = False
-        self.wind_received  = False 
-        self.heading_received = False
-
         
-
-        print("Init done")
-       
-        self.ready = False
-
-        print("waiting for GPS")
-        while not self.gps_received:
-            pass
-
-        print("waiting for wind")
-        while not self.wind_received:
-            pass
         
-        print("waiting for heading")
-        while not self.heading_received: 
-            pass
-        
-        print("waiting for imu")
-        while not self.imu_received:
-            pass
-
-        print("ready")
-        self.ready = True
-
-        update_line()
-
     def publish_command(self):
         msg_flap_cmd = Float32()
         msg_rudder_cmd = Float32()
 
         msg_flap_cmd.data = float(self.delta_s_max)
-        self.flap_publisher.publish(m);
+        self.flap_publisher.publish(msg_flap_cmd);
 
         msg_rudder_cmd.data = float(self.delta_r)
-        self.rudder_publisher.publish(m);
+        self.rudder_publisher.publish(msg_rudder_cmd);
 
 
     
-    def update_command(self):           
-        psi_ap= self.awd
+    def update_command(self):  
+        psi_ap = self.awd *np.pi/180
         sigma_r_max = 45 # angle max du gouvernail
-        psi = self.twd
+        psi = self.twd*np.pi/180
 
-        theta = self.heading
+        theta = self.heading*np.pi/180
 
         a,b = self.a.reshape((2,1)), self.b.reshape((2,1))
 
         m = self.X[:2]
-        e=np.linalg.det( np.hstack(((b-a)/np.linalg.norm(b-a),m-a)) )
+        e = np.linalg.det( np.hstack(((b-a)/np.linalg.norm(b-a),m-a)) )
 
-        phi=np.arctan2(b[1,0]-a[1,0],b[0,0]-a[0,0])
+        phi=np.arctan2(b[1,0]-a[1,0],b[0,0]-a[0,0])+2*np.pi
 
         if abs(e)>self.r :
             self.q=np.sign(e)
-        theta_bar = phi - np.arctan(e/self.r)
+        # theta_bar = phi - np.arctan(e/self.r)
+        theta_bar = phi
         if ( ((np.cos(psi-theta_bar)+ np.cos(self.ZETA)) < 0) or ((abs(e)-self.r < 0) and (np.cos(psi-phi) + np.cos(self.zeta)) < 0) ):
             theta_bar = np.pi + psi-self.ZETA*self.q
-        self.delta_r = self.DELTA_R_MAX / np.pi * sawtooth(theta-theta_bar)
-        # self.delta_s_max = np.pi/2*((np.cos(psi-theta_bar)+1)/2)**(np.log(np.pi/2/self.BETA)/np.log(2)) / np.pi*180
-        self.delta_s_max = 1 if (twd - heading) > 180 else - 1
 
+        self.delta_r = - self.DELTA_R_MAX / np.pi * (sawtooth(theta-theta_bar))
+        self.delta_r = np.tanh(self.delta_r/45)*55
+                                                    
+        self.delta_s_max = 28 if sawtooth( psi- theta) > 0 else -28
 
+        print(f"theta: {theta} \ttheta_bar: {theta_bar} \t saw: {sawtooth(theta-theta_bar)}")
+        self.publish_command()
+
+    def ready(self):
+        return self.gps_received & self.wind_received & self.heading_received
 
     def coord_callback(self, msg):
         self.gps_received |= True
         self.lat, self.lon = msg.latitude, msg.longitude
         x, y = coord2cart((self.lat, self.lon))
         self.X = [x,y,msg.sog]
-        self.update_line()
 
-        if self.ready : self.update_command()
+        if self.ready() : 
+            self.update_line()
+            self.update_command()
 
     def wind_callback(self, msg : WIND):
-        wind_received |= True
+        self.wind_received |= True
         self.twd = msg.true_wind_direction
         self.awd = msg.wind_direction
         self.aws = msg.wind_speed
         
-        if self.ready : self.update_command()
+        if self.ready() : self.update_command()
 
 
     def heading_callback(self, msg : HEADING):
         self.heading_received |= True
         self.heading=msg.heading
 
-        if self.ready : self.update_command()
+        if self.ready() : self.update_command()
 
     def yaw_callback(self, msg : YPR):
         self.imu_received |= True
@@ -193,7 +171,7 @@ class regulationNode(Node):
         
         if is_waypoint_passed(self.WPs[self.waypoint_passed+1], self.WPs[self.waypoint_passed], (self.lat, self.lon)) :
             self.waypoint_passed += 1;
-            self.a, self.b = coord2cart(WPs[self.waypoint_passed]), coord2cart(WPs[self.waypoint_passed+1])
+            self.a, self.b = coord2cart(self.WPs[self.waypoint_passed]), coord2cart(self.WPs[self.waypoint_passed+1])
 
         
 
@@ -210,7 +188,7 @@ def main(args=None):
     rclpy.spin(regulation_node)
 
 
-    regulation.destroy_node()
+    regulation_node.destroy_node()
     rclpy.shutdown()
 
 
