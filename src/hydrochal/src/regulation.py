@@ -2,230 +2,219 @@
 import numpy as np
 from numpy import cos,sin
 from numpy.linalg import norm,det
-import matplotlib.pyplot as plt
-from matplotlib.patches import Ellipse
+
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float64
-from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import Float32
 from interfaces.msg import WIND
 from interfaces.msg import GPS
 from interfaces.msg import HEADING
 from interfaces.msg import YPR
-from interfaces.msg import regulation
-#ROBLIB
 
 
-def angle(x):
-    x=x.flatten()
-    return np.arctan2(x[1],x[0])
-
-def add1(M):
-    M=np.array(M)
-    return np.vstack((M,np.ones(M.shape[1])))
-
-def tran2H(x,y):
-    return np.array([[1,0,x],[0,1,y],[0,0,1]])
-
-def rot2H(a):
-    return np.array([[cos(a),-sin(a),0],[sin(a),cos(a),0],[0,0,1]])
-
-#-------------------------------
-   
-def f(self,x,u,awind,ψ):
-    x,u=x.flatten(),u.flatten()
-    θ=x[2]; v=x[3]; w=x[4]; δr=u[0]; u2=u[1]; δs=x[5];
-    w_ap = np.array([[awind*np.cos(ψ-θ) - v*np.cos(ψ-θ)],[awind*np.sin(ψ-θ)]])
-    ψ_ap = angle(w_ap)
-    a_ap=np.linalg.norm(w_ap)
-    fr = self.p4*v*np.sin(δr)
-    fs = self.p3*(a_ap)* np.sin(δs-ψ_ap)
-    dx=v*np.cos(θ) + self.p0*awind*np.cos(ψ)
-    dy=v*np.sin(θ) + self.p0*awind*np.sin(ψ)
-    dv=(fs*np.sin(δs)-fr*np.sin(δr)-self.p1*v**2)/self.p8
-    dw=(fs*(self.p5-self.p6*np.cos(δs)) - self.p7*fr*np.cos(δr) - self.p2*w*v)/self.p9
-    ff=(a_ap)* np.sin(δs-u2-ψ_ap)
-    dδs = self.p10*ff*np.cos(u2)+   fs/self.p3 #=> voile
-    xdot=np.array([[dx],[dy],[w],[dv],[dw],[dδs]])
-    return xdot,ψ_ap,a_ap,fr,fs,ff
+def sawtooth(x):
+    x = x+np.pi
+    return ((x + np.pi) % (2 * np.pi) - np.pi)/np.pi  # or equivalently   2*arctan(tan(x/2))
 
 
-def regulateur (self,x,q,a,b):
-    psi=2
-    zeta=np.pi/4
-    theta=x[2]
-    m=np.array([x[0],x[1]]).reshape(2,1)
-    f=np.hstack(((b-a)/np.linalg.norm(b-a),m-a))
-    e=np.linalg.det(f)   
-    phi=np.arctan2(b[1,0]-a[1,0],b[0,0]-a[0,0])
-    if abs(e)>self.r/2 :
-        q=np.sign(e)
-    #theta_etoile=phi - (2*0.35/3.14)*arctan(e/r)
-    theta_etoile=phi - np.arctan(e/self.r)
-    if (((np.cos(psi-theta_etoile)+ np.cos(zeta)) < 0) or (abs(e)-self.r < 0 and (np.cos(psi-phi) + np.cos(zeta)) < 0)):
-        thetabar=np.pi+psi-zeta*q
-    else :
-        thetabar=theta_etoile    
-    if np.cos (thetabar-theta)>0:
-        sigma_r=self.sigma_r_max*np.sin(theta-thetabar)
-    else :
-        sigma_r=self.sigma_r_max*np.sign(np.sin(theta-thetabar))
-    #sigma_max=1
-    sigma_s_max = np.pi/2*((np.cos(psi-thetabar)+1)/2)**q
-    
-    u =np.array([sigma_r,[sigma_s_max],[q]]).reshape(3,1)
-   # print(u)
-    return u,m
+R = 6378000 # earth radius in meter
+LAT_REF = 48.19924
+LON_REF = -3.01461 
+
+
+
+def coord2cart(coords,coords_ref=(LAT_REF,LON_REF)):
+    '''
+    in :
+        coords = (lat,lon)
+        coords_ref = centre du plan
+    return :
+        x_tilde et y_tilde coord sur le plan centre en coord_ref
+    '''
+
+    ly,lx = coords
+    lym,lxm = coords_ref
+
+    x_tilde = R * cos(ly*np.pi/180)*(lx-lxm)*np.pi/180
+    y_tilde = R * (ly-lym)*np.pi/180
+
+    return np.array([[x_tilde,y_tilde]]).T
+
+def is_waypoint_passed(next_wp_coord,previous_wp_coord,cm):
+
+    xy_nwp = coord2cart(next_wp_coord)
+    xy_pwp = coord2cart(previous_wp_coord)
+    xy_m = coord2cart(cm)
+
+    return (((xy_nwp-xy_pwp)@(xy_m-xy_nwp).T)[0,0] > 0)
+
 
 
 ## Partie ROS
 
-class Plannif_regulation(Node):
+class regulationNode(Node):
 
-    def __init__(self):
-        super().__init__('sailboat_publisher')
+    def __init__(self, WPs):
+        super().__init__('regulation_node')
 
-        # Constants
-        self.p0 = 0.1 #dérive
-        self.p1 = 50 #frottement du bateau
-        self.p2 = 6000 #frottement à la rotation
-        self.p3 = 1000 # coef voile
-        self.p4 = 2000 # coef gouvernail
-        self.p5 = 0.01  #distance centre de poussée de la voile au mat (m)
-        self.p6 = 1 #distance quille mât (m)
-        self.p7 = 2 # distance gouvernail-quille (m)
-        self.p8 = 300 #masse (kg)
-        self.p9 = 10000 # moment d'inertie
-        self.p10 = 1 #coef flag
-        self.r = 10 # Taille couloirs
-        self.sigma_r_max = np.radians(55) # angle max du safran
-        self.dt= 0.1
+        self.WPs = WPs
+        self.wp_passed = 0
+        self.r = 10 # Taille couloirs:
 
-        msg = Float64()
-
-        self.coord_subscriber = self.create_subscription(GPS, 'GPS', self.coord_callback, 10)
-        self.wind_subscriber = self.create_subscription(WIND, 'WIND', self.wind_callback, 10)
-        self.heading_subscriber = self.create_subscription(HEADING, 'HEADING', self.heading_callback, 10)
-        self.ypr_subscriber = self.create_subscription(YPR, 'YPR', self.yaw_callback, 10)
+        self.coord_subscriber = self.create_subscription(GPS, '/GPS', self.coord_callback, 10)
+        self.wind_subscriber = self.create_subscription(WIND, '/WIND', self.wind_callback, 10)
+        self.heading_subscriber = self.create_subscription(HEADING, '/HEADING', self.heading_callback, 10)
+        self.ypr_subscriber = self.create_subscription(YPR, '/YPR', self.yaw_callback, 10)
 
         
         # Init publisher vers topic "Plannif"
-        self.u_publisher_ = self.create_publisher(
-            Float64, 
-            'Commande', 
-            10)
+        self.flap_publisher = self.create_publisher(Float32, '/cmd_flap', 10)
+        self.rudder_publisher = self.create_publisher(Float32, '/cmd_rudder', 10)
         
         # Init Variables de classe
 
-        self.P = [0.0,0.0,0.0]# Position + vitesse du boat (x,y,v)
-        
-        self.vent = [0.0,0.0,0.0] # vent_true,vent_ap,awind
-                          
-        self.heading= 0.0 # Cap véhicule
-        
-        self.yaw=0.0 # angle voile
+        self.X = [0,0,0]
+        self.heading = 0.0 # Cap véhicule 
+        self.sail_yaw = 0.0 # angle voile
 
-        # Reference point for cartesian projection to enu local plan
-        self.lat0 = 48.199184
-        self.lon0 = -3.014383
+        self.DELTA_R_MAX = 45
+        self.BETA = 0.5
+        self.ZETA = 0.2
+
+        self.awd = 0 
+        self.twd = 0
+      
+        self.lat = (0,0)
+        self.lon = (0,0)
+        self.a, self.b = coord2cart(WPs[0]), coord2cart(WPs[1])
+        self.waypoint_passed = 0
+        # self.update_line()
+
+        self.gps_received = False
+        self.imu_received = False
+        self.wind_received  = False 
+        self.heading_received = False
+
+        
+
+        print("Init done")
+       
+        self.ready = False
+
+        print("waiting for GPS")
+        while not self.gps_received:
+            pass
+
+        print("waiting for wind")
+        while not self.wind_received:
+            pass
+        
+        print("waiting for heading")
+        while not self.heading_received: 
+            pass
+        
+        print("waiting for imu")
+        while not self.imu_received:
+            pass
+
+        print("ready")
+        self.ready = True
+
+        update_line()
+
+    def publish_command(self):
+        msg_flap_cmd = Float32()
+        msg_rudder_cmd = Float32()
+
+        msg_flap_cmd.data = float(self.delta_s_max)
+        self.flap_publisher.publish(m);
+
+        msg_rudder_cmd.data = float(self.delta_r)
+        self.rudder_publisher.publish(m);
+
+
     
-    def coord_to_cart(self, lat, lon):
-        # transform gps coordinates to x,y on local plan (East North Up frame)
-        # CONSTANTS
-        a = 6378137
-        b = 6356752.3142
-        e2 = 1 - (b/a)**2
-        # Location of reference point in radians
-        phi = self.lat0*np.pi/180
-        lam = self.lon0*np.pi/180
-        # Location of data points in radians
-        dphi= lat*np.pi/180 - phi
-        dlam= lon*np.pi/180 - lam
-        # Some useful definitions
-        tmp1 = np.sqrt(1-e2*np.sin(phi)**2)
-        cp = np.cos(phi)
-        sp = np.sin(phi)
-        # Transformations
-        de = (a/tmp1)*cp*dlam - (a*(1-e2)/(tmp1**3))*sp*dphi*dlam
-        dn = (a*(1-e2)/tmp1**3)*dphi + 1.5*cp*sp*a*e2*dphi**2 + 0.5*sp*cp*(a/tmp1)*dlam**2
-        return de, dn
+    def update_command(self):           
+        psi_ap= self.awd
+        sigma_r_max = 45 # angle max du gouvernail
+        psi = self.twd
 
-    def coord_callback(self, msg : GPS):
-        x, y = self.coord_to_cart(msg.latitude, msg.longitude)
-        self.P = [x,y,msg.sog]
+        theta = self.heading
+
+        a,b = self.a.reshape((2,1)), self.b.reshape((2,1))
+
+        m = self.X[:2]
+        e=np.linalg.det( np.hstack(((b-a)/np.linalg.norm(b-a),m-a)) )
+
+        phi=np.arctan2(b[1,0]-a[1,0],b[0,0]-a[0,0])
+
+        if abs(e)>self.r :
+            self.q=np.sign(e)
+        theta_bar = phi - np.arctan(e/self.r)
+        if ( ((np.cos(psi-theta_bar)+ np.cos(self.ZETA)) < 0) or ((abs(e)-self.r < 0) and (np.cos(psi-phi) + np.cos(self.zeta)) < 0) ):
+            theta_bar = np.pi + psi-self.ZETA*self.q
+        self.delta_r = self.DELTA_R_MAX / np.pi * sawtooth(theta-theta_bar)
+        # self.delta_s_max = np.pi/2*((np.cos(psi-theta_bar)+1)/2)**(np.log(np.pi/2/self.BETA)/np.log(2)) / np.pi*180
+        self.delta_s_max = 1 if (twd - heading) > 180 else - 1
+
+
+
+    def coord_callback(self, msg):
+        self.gps_received |= True
+        self.lat, self.lon = msg.latitude, msg.longitude
+        x, y = coord2cart((self.lat, self.lon))
+        self.X = [x,y,msg.sog]
+        self.update_line()
+
+        if self.ready : self.update_command()
 
     def wind_callback(self, msg : WIND):
-        self.vent = [msg.true_wind_direction,msg.wind_direction,msg.wind_speed]
+        wind_received |= True
+        self.twd = msg.true_wind_direction
+        self.awd = msg.wind_direction
+        self.aws = msg.wind_speed
+        
+        if self.ready : self.update_command()
+
 
     def heading_callback(self, msg : HEADING):
+        self.heading_received |= True
         self.heading=msg.heading
 
+        if self.ready : self.update_command()
+
     def yaw_callback(self, msg : YPR):
-        self.yaw=msg.yaw
+        self.imu_received |= True
+        self.sail_yaw = msg.yaw
 
-    def main_loop(self):
 
-        q=1 # Initialisation
-        # VARIABLE PROGRAMME
-        i=0
-        x = np.array([self.P[0,0],self.P[1,0],self.heading,self.P[2,0],0,self.yaw]).reshape(6,1)   #x=(x,y,θ,v,w,δs)
-        # COORDONEE DES LIGNES A SUIVRE
+   
+    def update_line(self):
         
-        a = np.array([[75],[-75]])
-        b = np.array([[-75],[-75]])
-        c=np.array([-75,20]).reshape(2,1)
-        d=np.array([-150,20]).reshape(2,1)
-        coord=[a,b,c,d]
+        if is_waypoint_passed(self.WPs[self.waypoint_passed+1], self.WPs[self.waypoint_passed], (self.lat, self.lon)) :
+            self.waypoint_passed += 1;
+            self.a, self.b = coord2cart(WPs[self.waypoint_passed]), coord2cart(WPs[self.waypoint_passed+1])
+
         
-        n=len(coord) # nbr de ligne
-        ψ_ap=self.vent[2,0]
-        sigma_r_max =45 # angle max du gouvernail
-        awind,ψ = self.vent[3,0],self.vent[1,0] # vitesse du vent, angle du vent 
-
-        while True :
-            u,m=regulateur(x,q,coord[i],coord[i+1])
-            vector_director = coord[i+1] - coord[i]
-            vector_point_B= coord[i+1]
-            if vector_director[0] == 0:
-                # Segment vertical
-                vector_orthogonal = np.array([1, 0])
-            elif vector_director[1] == 0:
-                # Segment horizontal
-                vector_orthogonal = np.array([0, 1])
-            else:
-                # Segment diagonal
-                coord_y_norm = -(vector_director[0] ** 2) / vector_director[1]
-                vector_orthogonal = np.array([vector_director[0], coord_y_norm])
-
-            x2 = coord[i+1][0][0] + vector_orthogonal[0]
-            y2 = coord[i+1][1][0] + vector_orthogonal[1]
-            c=np.array([x2,y2]).reshape(2,1)
-         
-            vecteur_ab = coord[i+1] - c
-
-            # Vecteur entre le point a et votre position
-            vecteur_a_vous = m - c
-
-            # Calcul du produit vectoriel entre le vecteur ab et le vecteur a_vous
-            produit_vectoriel = np.cross(vecteur_ab.T, vecteur_a_vous.T)
-            
-            if produit_vectoriel <0:
-               i=i+1
-            if i==n-1:
-                break
-
-            u_msg = Plannif_regulation()
-            u_msg.u_rudder= u[0,0]
-            u_msg.u_flap= u[1,0]
-            self.u_publisher_.publish(u_msg)
-            
-            xdot,ψ_ap,w_ap,fr,fs,ff=f(x,u)
-            x = x + self.dt*xdot
 
 
+
+              
 def main(args=None):
     rclpy.init(args=args)
-    regulation = Plannif_regulation()
-    rclpy.spin(regulation)
+
+
+    WPs = [[48.198861, -3.013927],[48.195524, -3.018772],[48.19881, -3.01542],[48.19923, -3.01474]]
+
+    regulation_node = regulationNode(WPs)
+    rclpy.spin(regulation_node)
+
+
     regulation.destroy_node()
     rclpy.shutdown()
+
+
+if __name__=='__main__':
+
+    main()
+
