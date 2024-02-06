@@ -13,6 +13,9 @@ from sensor_msgs.msg import Image, CameraInfo
 
 from tools import VideoProcessor, EPSILON
 
+DRAW_DISPARITY = True
+DRAW_STRATEGY = True
+
 
 class ObstacleDetector(Node):
     def __init__(self, update_rate=1.):  # update_rate in Hz
@@ -39,7 +42,7 @@ class ObstacleDetector(Node):
     
     def processing_callback(self):
         if (self.image_left is not None) and (self.depth_map is not None):
-            w0, w1, h0, h1 = self.video_processor.process(self.image_left, draw_strategy=True)
+            w0, w1, h0, h1 = self.video_processor.process(self.image_left, self.depth_map, draw_strategy=DRAW_STRATEGY)
 
             window = self.depth_map[h0:h1, w0:w1]
             # only consider distances smaller than 30m
@@ -72,6 +75,11 @@ class ObstacleDetector(Node):
         if self.focal_length is not None:  # did we received camera information?
             bounded_disparity = np.maximum(msg.min_disparity, np.minimum(frame, msg.max_disparity))
             self.depth_map = self.d_stereo / np.maximum(EPSILON, bounded_disparity)
+
+            if DRAW_DISPARITY:
+                disparity = (bounded_disparity * (255. / msg.max_disparity)).astype(np.uint8)
+                cv2.imshow("Disparity", disparity)
+                cv2.waitKey(1)
     
     def camera_info_callback(self, msg):
         projection_matrix = msg.p

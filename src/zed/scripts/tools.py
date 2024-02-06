@@ -2,6 +2,7 @@
 
 import cv2
 import numpy as np
+
 from scipy.ndimage import sobel
 from sklearn.linear_model import RANSACRegressor
 
@@ -34,9 +35,10 @@ def take_top_n(indices, n_top, top_distance=5):
 
 
 class HorizonEstimator:
-    def __init__(self, n_vertical=8, n_top=3, max_residual=4., max_slope_change=6e-2, max_bias_change=10.):
+    def __init__(self, n_vertical=8, n_top=3, alpha=0.2, max_residual=4., max_slope_change=8e-2, max_bias_change=32.):
         self.n_vertical = n_vertical
         self.n_top = n_top
+        self.alpha = alpha
 
         self.max_residual = max_residual
         self.max_slope_change = max_slope_change  # no units
@@ -68,9 +70,9 @@ class HorizonEstimator:
         height, width, *_ = image.shape
         horizontal_half_step = int(0.5 * width / self.n_vertical)
 
-        # Compute the horizontal gradient -> higher = from dark to bright -> Guerledan hypothesis
-        # horizontal_grad = sobel(image, axis=0)
-        horizontal_grad = np.abs(sobel(image, axis=0))
+        # Compute the horizontal gradient -> smallest = from far to close -> Guerledan hypothesis
+        horizontal_grad = sobel(image, axis=0)
+        # horizontal_grad = np.abs(sobel(image, axis=0))
 
         # Filter top n_top largest gradient points
         indices = np.argsort(horizontal_grad[:, horizontal_half_step:][:, ::2 * horizontal_half_step], axis=0)
@@ -94,8 +96,11 @@ class HorizonEstimator:
         else:
             # Update slope
             ransac_pred_y = ransac.predict(np.array([[0.], [width - 1.]]))
-            self.bias, y_w = ransac_pred_y.flatten()
-            self.slope = (y_w - self.bias) / width
+            bias, y_w = ransac_pred_y.flatten()
+            slope = (y_w - bias) / width
+
+            self.slope = (1. - self.alpha) * self.slope + self.alpha * slope
+            self.bias = bias if self.bias is None else (1. - self.alpha) * self.bias + self.alpha * bias
 
             # Compute horizon mask
             mask = (np.arange(height).reshape(-1, 1) > ransac.predict(np.arange(width).reshape(-1, 1)).T)
@@ -193,6 +198,7 @@ class VideoProcessor:
         self.tracking_window = None  # need image dimensions to be initialized
 
         # Erosion & dilatation are applied on active pixel -> used for computing the saliency mask
+        self.depth_kernel = cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(11, 11))
         self.connection_kernel = cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(3, 3))
         self.erosion_kernel = cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(5, 5))
         self.dilatation_kernel = cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(5, 5))
@@ -212,10 +218,17 @@ class VideoProcessor:
         }
 
         # Define variables to initialize later
+        self.left_crop = None
         self.old_frame = None
         self.points_old_frame = []
 
-    def process(self, source_frame, draw_strategy=False):
+    def process(self, source_frame, source_depth, draw_strategy=False):
+        # Crop left side of the image (where left & right POV doesn't overlapped)
+        if self.left_crop is None:  # compute it once and for all
+            self.left_crop = np.argmin(np.all(source_depth > 30e3, axis=0))  # look for too far area
+        source_frame = source_frame[:, self.left_crop:]
+        source_depth = source_depth[:, self.left_crop:]
+
         # Get image dimensions
         source_height, source_width, *_ = source_frame.shape
         height = source_height // self.downscale_factor
@@ -225,15 +238,20 @@ class VideoProcessor:
         if self.tracking_window is None:
             self.tracking_window = TrackingWindow(height, width)
 
-        # Downscale and convert to grayscale
+        # Downscale
         frame_bgr = cv2.resize(source_frame, (width, height))
+        depth_map = cv2.resize(source_depth, (width, height))
+
+        # Convert to grayscale
         frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
         # Draw points and line on a separate image (for debugging only)
         canvas = source_frame.copy()
 
         # Estimate a line for the horizon
-        hpx, hpy, border_y, horizontal_mask = self.horizon_estimator.compute(frame)
+        depth_mask = (depth_map < 20e3).astype(np.uint8)
+        dilated_depth_mask = cv2.dilate(depth_mask, self.depth_kernel)
+        hpx, hpy, border_y, horizontal_mask = self.horizon_estimator.compute(dilated_depth_mask)
 
         if draw_strategy:  # DRAW gradients points and horizon
             # Scatter gradient points on the image
@@ -258,13 +276,13 @@ class VideoProcessor:
 
         # Current frame becomes the old one
         self.old_frame = frame.copy()
-
+        
         # Compute the saliency map (where to look)
-        saliency_mask = self.saliency_estimator.compute(frame_bgr, horizontal_mask)
+        eroded_depth_mask = cv2.erode(depth_mask, self.erosion_kernel)
+        bottom_mask = horizontal_mask & eroded_depth_mask
+        saliency_mask = self.saliency_estimator.compute(frame_bgr, bottom_mask)
 
-        # Compute good feature point to keep track of
-        mask = horizontal_mask & saliency_mask
-
+        mask = saliency_mask & horizontal_mask & depth_mask
         mask = cv2.dilate(mask, self.connection_kernel)
         mask = cv2.erode(mask, self.erosion_kernel)
         mask = cv2.dilate(mask, self.dilatation_kernel)

@@ -29,6 +29,7 @@
 #include <stereo_msgs/msg/disparity_image.hpp>
 // <---- Includes
 
+#define FROM_FILE
 #define USE_OCV_TAPI // Comment to use "normal" cv::Mat instead of CV::UMat
 // #define USE_HALF_SIZE_DISP // Comment to compute depth matching on full image frames
 
@@ -117,6 +118,15 @@ int main(int argc, char *argv[])
     // <---- Set Video parameters
 
     // ----> Create Video Capture
+#ifdef FROM_FILE
+    cv::VideoCapture cap("video/stereo_monday.avi");
+    if (!cap.isOpened())
+    {
+        std::cerr << "Error: Could not open the video file." << std::endl;
+        return EXIT_FAILURE;
+    }
+    int sn = 3491; // hard coded... (3042)
+#else
     sl_oc::video::VideoCapture cap(params);
     if( !cap.initializeVideo(-1) )
     {
@@ -126,6 +136,8 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
     int sn = cap.getSerialNumber();
+#endif
+
     std::cout << "Connected to camera sn: " << sn << std::endl;
     // <---- Create Video Capture
 
@@ -143,7 +155,12 @@ int main(int argc, char *argv[])
 
     // ----> Frame size
     int w, h;
+#ifdef FROM_FILE
+    w = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+    h = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+#else
     cap.getFrameSize(w,h);
+#endif
     // <---- Frame size
 
     // ----> Initialize calibration
@@ -220,23 +237,30 @@ int main(int argc, char *argv[])
     // Infinite video grabbing loop
     while (rclcpp::ok())
     {
+        bool is_frame_valid;
+
         // Get a new frame from camera
-        const sl_oc::video::Frame frame = cap.getLastFrame();
+#ifdef FROM_FILE
+        is_frame_valid = cap.read(frameBGR);
+#else
+        const sl_oc::video::Frame oc_frame = cap.getLastFrame();
+        is_frame_valid = (oc_frame.data != nullptr);
+#endif
 
         // ----> If the frame is valid we can convert, rectify and display it
-        if(frame.data!=nullptr && frame.timestamp!=last_ts)
+        if(is_frame_valid)
         {
-            last_ts = frame.timestamp;
-
+#ifndef FROM_FILE
             // ----> Conversion from YUV 4:2:2 to BGR for visualization
 #ifdef USE_OCV_TAPI
-            cv::Mat frameYUV_cpu = cv::Mat( frame.height, frame.width, CV_8UC2, frame.data );
+            cv::Mat frameYUV_cpu = cv::Mat( h, w, CV_8UC2, oc_frame.data );
             frameYUV = frameYUV_cpu.getUMat(cv::ACCESS_READ,cv::USAGE_ALLOCATE_HOST_MEMORY);
 #else
-            frameYUV = cv::Mat( frame.height, frame.width, CV_8UC2, frame.data );
+            frameYUV = cv::Mat( h, w, CV_8UC2, oc_frame.data );
 #endif
             cv::cvtColor(frameYUV,frameBGR,cv::COLOR_YUV2BGR_YUYV);
             // <---- Conversion from YUV 4:2:2 to BGR for visualization
+#endif
 
             // ----> Extract left and right images from side-by-side
             left_raw = frameBGR(cv::Rect(0, 0, frameBGR.cols / 2, frameBGR.rows));
