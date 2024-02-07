@@ -4,3 +4,4 @@ log/
 src/.vscode
 rosbags/
 rosbag*
+*.avi

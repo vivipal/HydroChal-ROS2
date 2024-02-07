@@ -119,7 +119,7 @@ int main(int argc, char *argv[])
 
     // ----> Create Video Capture
 #ifdef FROM_FILE
-    cv::VideoCapture cap("video/stereo_monday.avi");
+    cv::VideoCapture cap("video/short.avi");
     if (!cap.isOpened())
     {
         std::cerr << "Error: Could not open the video file." << std::endl;

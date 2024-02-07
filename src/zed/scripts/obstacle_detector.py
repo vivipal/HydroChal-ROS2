@@ -13,7 +13,7 @@ from sensor_msgs.msg import Image, CameraInfo
 
 from tools import VideoProcessor, EPSILON
 
-DRAW_DISPARITY = True
+DRAW_DISPARITY = False
 DRAW_STRATEGY = True
 
 
@@ -42,27 +42,28 @@ class ObstacleDetector(Node):
     
     def processing_callback(self):
         if (self.image_left is not None) and (self.depth_map is not None):
-            w0, w1, h0, h1 = self.video_processor.process(self.image_left, self.depth_map, draw_strategy=DRAW_STRATEGY)
+            obstacles = self.video_processor.process(self.image_left, self.depth_map, draw_strategy=DRAW_STRATEGY)
 
-            window = self.depth_map[h0:h1, w0:w1]
-            # only consider distances smaller than 30m
-            valid_distances = window[window < 30e3]
+            for (w0, w1, h0, h1) in obstacles:
+                window = self.depth_map[h0:h1, w0:w1]
+                # only consider distances smaller than 30m
+                valid_distances = window[window < 30e3]
 
-            if valid_distances.size > 0:
-                tx = -self.d_stereo / 2.  # left camera
-                z = np.median(valid_distances)
+                if valid_distances.size > 0:
+                    tx = -self.d_stereo / 2.  # left camera
+                    z = np.median(valid_distances)
 
-                obstacle = WideObstacle()
+                    obstacle = WideObstacle()
 
-                # Expressed coordinates in the centered frame (in between the 2 cameras)
-                obstacle.x_min = ((w0 - self.cx) * z - tx) / self.focal_length
-                obstacle.x_max = ((w1 - self.cx) * z - tx) / self.focal_length
+                    # Expressed coordinates in the centered frame (in between the 2 cameras)
+                    obstacle.x_min = ((w0 - self.cx) * z - tx) / self.focal_length
+                    obstacle.x_max = ((w1 - self.cx) * z - tx) / self.focal_length
 
-                obstacle.y_min = (h0 - self.cy) * (z / self.focal_length)
-                obstacle.y_max = (h1 - self.cy) * (z / self.focal_length)
+                    obstacle.y_min = (h0 - self.cy) * (z / self.focal_length)
+                    obstacle.y_max = (h1 - self.cy) * (z / self.focal_length)
 
-                obstacle.z = float(z)
-                self.obstacle_publisher.publish(obstacle)
+                    obstacle.z = float(z)
+                    self.obstacle_publisher.publish(obstacle)
     
     def image_callback(self, msg):
         # Convert ROS image message to OpenCV image
