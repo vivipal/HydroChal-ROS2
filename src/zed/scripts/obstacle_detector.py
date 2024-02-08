@@ -7,9 +7,9 @@ import cv2
 import numpy as np
 from cv_bridge import CvBridge
 
-from interfaces.msg import WideObstacle
 from stereo_msgs.msg import DisparityImage
 from sensor_msgs.msg import Image, CameraInfo
+from interfaces.msg import WideObstacle, ObstacleList
 
 from tools import VideoProcessor, EPSILON
 
@@ -27,8 +27,7 @@ class ObstacleDetector(Node):
 
         # Create a timer with a callback function and a period of 1 / update_rate
         self.processing_timer = self.create_timer(1. / update_rate, self.processing_callback)
-
-        self.obstacle_publisher = self.create_publisher(WideObstacle, 'detected_obstacle', 10)
+        self.obstacles_publisher = self.create_publisher(ObstacleList, 'detected_obstacles', 10)
 
         self.image_left = None
         self.depth_map = None
@@ -41,10 +40,12 @@ class ObstacleDetector(Node):
         self.video_processor = VideoProcessor()
     
     def processing_callback(self):
-        if (self.image_left is not None) and (self.depth_map is not None):
-            obstacles = self.video_processor.process(self.image_left, self.depth_map, draw_strategy=DRAW_STRATEGY)
+        obstacles = []
 
-            for (w0, w1, h0, h1) in obstacles:
+        if (self.image_left is not None) and (self.depth_map is not None):
+            boxes = self.video_processor.process(self.image_left, self.depth_map, draw_strategy=DRAW_STRATEGY)
+
+            for (w0, h0, w1, h1) in boxes:
                 window = self.depth_map[h0:h1, w0:w1]
                 # only consider distances smaller than 30m
                 valid_distances = window[window < 30e3]
@@ -63,7 +64,11 @@ class ObstacleDetector(Node):
                     obstacle.y_max = (h1 - self.cy) * (z / self.focal_length)
 
                     obstacle.z = float(z)
-                    self.obstacle_publisher.publish(obstacle)
+                    obstacles.append(obstacle)
+
+        obstacles_msg = ObstacleList()
+        obstacles_msg.obstacles = obstacles
+        self.obstacles_publisher.publish(obstacles_msg)
     
     def image_callback(self, msg):
         # Convert ROS image message to OpenCV image

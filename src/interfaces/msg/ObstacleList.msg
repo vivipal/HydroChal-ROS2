@@ -1,0 +1,2 @@
+# ObstacleList.msg
+WideObstacle[] obstacles

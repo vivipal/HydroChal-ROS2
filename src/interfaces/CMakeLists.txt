@@ -23,6 +23,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/YPR.msg"
   "msg/Command.msg"
   "msg/WideObstacle.msg"
+  "msg/ObstacleList.msg"
   DEPENDENCIES std_msgs
 )
 

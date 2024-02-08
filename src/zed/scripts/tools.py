@@ -11,8 +11,8 @@ EPSILON = 1e-5
 # Define colors in BGR
 COLOR_OF = (255, 0, 0)  # BLUE
 COLOR_HP = (0, 0, 255)  # RED
+COLOR_BOX = (255, 0, 255)  # PURPLE
 COLOR_HORIZON = (0, 255, 0)  # GREEN
-COLOR_WINDOW = (255, 0, 255)  # PURPLE
 
 
 def take_top_n(indices, n_top, top_distance=5):
@@ -126,12 +126,128 @@ class SaliencyEstimator:
         return saliency_mask
 
 
-class ObstacleTracker:
-    def __init__(self):
-        pass
+def bounding_box_from_mask(mask):
+    # Find indices of True values
+    true_indices = np.argwhere(mask)
 
-    def compute(self, frame_bgr, mask):
-        return []
+    # Calculate bounding box coordinates
+    y0, x0 = np.min(true_indices, axis=0)
+    y1, x1 = np.max(true_indices, axis=0)
+
+    return x0, y0, x1, y1
+
+
+class Obstacle:
+    def __init__(self, keypoints, label):
+        self.keypoints = keypoints
+        self.label = label
+
+        self.age = 0
+    
+    def update(self, new_keypoints, label):
+        self.keypoints = new_keypoints
+        self.label = label
+        self.age += 1
+
+
+class SIFTracker:
+    def __init__(self, top_two_ratio=0.64, keeping_ratio=0.32, pegi=2):
+        self.top_two_ratio = top_two_ratio
+        self.keeping_ratio = keeping_ratio
+        self.pegi = pegi
+
+        # Initialize SIFT detector
+        self.sift = cv2.SIFT_create()
+
+        # Initialize FLANN matcher
+        FLANN_INDEX_KDTREE = 1
+        index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
+        search_params = dict(checks=50)
+        self.flann = cv2.FlannBasedMatcher(index_params, search_params)
+
+        self.frame = None
+        self.keypoints = None
+        self.descriptors = None
+
+        self.obstacles = []
+
+    def compute(self, frame, mask):
+        # Find keypoints and descriptors in the current frame
+        keypoints, descriptors = self.sift.detectAndCompute(frame, mask)
+
+        if len(keypoints) < 2:
+            self.frame = None
+            return []
+
+        # Perform connected component labeling
+        num_labels, labels = cv2.connectedComponents(mask, connectivity=8)
+
+        if self.frame is None:
+            remainding_keypoints = keypoints
+        else:
+            # Match descriptors between the old and the new frame : take best 2
+            matches = self.flann.knnMatch(self.descriptors, descriptors, k=2)
+
+            # Apply ratio test
+            good_matches = []
+            for m,n in matches:
+                if m.distance < self.top_two_ratio * n.distance:
+                    good_matches.append(m)
+            
+            # Extract matched keypoints
+            n_matched_keypoints = len(good_matches)
+            matched_keypoints_old = [self.keypoints[m.queryIdx] for m in good_matches]
+            matched_keypoints_new = [keypoints[m.trainIdx] for m in good_matches]
+
+            new_obstacles = []
+            matched_keypoints_flag = [True for _ in range(n_matched_keypoints)]
+            for obstacle in self.obstacles:
+                keypoint_clustering = [[] for _ in range(1 + num_labels)]
+                for old_keypoint in obstacle.keypoints:
+                    try:
+                        k = matched_keypoints_old.index(old_keypoint)
+                    except ValueError:
+                        continue
+                    else:
+                        matched_keypoints_flag[k] = False
+                        new_keypoint = matched_keypoints_new[k]
+                        x, y = new_keypoint.pt
+                        label = labels[int(y),int(x)]
+                        keypoint_clustering[label].append(new_keypoint)
+                new_label, new_keypoints = max(enumerate(keypoint_clustering), key=lambda tup: len(tup[1]))
+                if new_label > 0 and len(new_keypoints) > self.keeping_ratio * len(obstacle.keypoints):
+                    obstacle.update(new_keypoints, new_label)
+                    new_obstacles.append(obstacle)
+            
+            self.obstacles = new_obstacles
+            remainding_keypoints = [matched_keypoints_new[k] for k in range(n_matched_keypoints) if matched_keypoints_flag[k]]         
+        
+        # Add remainding keypoints
+        obstacles = [[] for _ in range(1 + num_labels)]
+        for keypoint in remainding_keypoints:
+            x, y = keypoint.pt
+            label = labels[int(y),int(x)]
+            obstacles[label].append(keypoint)
+        
+        for (label, obs_keypoints) in enumerate(obstacles):  # iterate through assigned keypoints
+            if label > 0 and len(obs_keypoints) > 0:  # only consider non empty components
+                obstacle = Obstacle(obs_keypoints, label)
+                self.obstacles.append(obstacle)
+
+        # The new becomes the old
+        self.frame = frame.copy()
+        self.keypoints = keypoints
+        self.descriptors = descriptors
+
+        verified_obstacles = []
+        for obstacle in self.obstacles:
+            if obstacle.age > self.pegi:
+                obstacle_mask = (labels == obstacle.label)
+                if np.any(obstacle_mask):
+                    x0, y0, x1, y1 = bounding_box_from_mask(obstacle_mask)
+                    verified_obstacles.append((x0, y0, x1, y1))
+        
+        return verified_obstacles
 
 
 class VideoProcessor:
@@ -141,7 +257,7 @@ class VideoProcessor:
 
         self.horizon_estimator = HorizonEstimator()
         self.saliency_estimator = SaliencyEstimator()
-        self.obstacle_tracker = ObstacleTracker()
+        self.obstacle_tracker = SIFTracker()
 
         # Erosion & dilatation are applied on active pixel -> used for computing the saliency mask
         self.dilate_depth = cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(11, 11))
@@ -149,7 +265,7 @@ class VideoProcessor:
         
         self.connection_kernel = cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(3, 3))
         self.erosion_kernel = cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(5, 5))
-        self.dilatation_kernel = cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(7, 7))
+        self.dilatation_kernel = cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(11, 11))
 
         # Define variables to initialize later
         self.left_crop = None
@@ -172,6 +288,7 @@ class VideoProcessor:
 
         # Draw points and line on a separate image (for debugging only)
         canvas = source_frame.copy()
+        frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
         # Estimate a line for the horizon
         depth_mask = (depth_map < 20e3).astype(np.uint8)
@@ -189,6 +306,8 @@ class VideoProcessor:
         mask = cv2.erode(mask, self.erosion_kernel)
         mask = cv2.dilate(mask, self.dilatation_kernel)
 
+        obstacles = self.obstacle_tracker.compute(frame, mask)
+
         if draw_strategy:  # DRAW horizon information, tracking window & show layout
             # Scatter gradient points on the image
             for (x, y) in zip(hpx, hpy):
@@ -199,6 +318,10 @@ class VideoProcessor:
             ransac_points = np.concatenate((border_x, border_y), axis=2).astype(np.int32)
             cv2.polylines(canvas, [ransac_points * self.downscale_factor],
                           isClosed=False, color=COLOR_HORIZON, thickness=2)
+            
+            for box in obstacles:
+                x0, y0, x1, y1 = np.array([*box]) * self.downscale_factor
+                cv2.rectangle(canvas, (int(x0), int(y0)), (int(x1), int(y1)), COLOR_BOX, thickness=2)
             
             # Create the depth debug image
             debug = cv2.cvtColor(mask * 255, cv2.COLOR_GRAY2BGR)
@@ -216,14 +339,13 @@ class VideoProcessor:
             debug_saliency = cv2.cvtColor(saliency_mask * 255, cv2.COLOR_GRAY2BGR)
             debug_saliency = cv2.resize(debug_saliency, (source_width, source_height))
 
-            # Stack images vertically or horizontally
-            imgs = (debug_depth, debug_horizon, debug_saliency)
-            layout = np.hstack(imgs)
+            # Show pre-processes
+            # imgs = (debug_depth, debug_horizon, debug_saliency)
+            # layout = np.hstack(imgs)
+            # cv2.imshow('Pre-process', layout)
 
-            # Show lower part of layout
-            cv2.imshow('Canvas', np.hstack((canvas, debug)))
-            cv2.imshow('Debug', layout)
+            # Show canvas & mask
+            cv2.imshow('Canvas & Mask', np.hstack((canvas, debug)))
             cv2.waitKey(1)
 
-        # TODO : track obstales from mask & generate boxes
-        return self.obstacle_tracker.compute(frame_bgr, mask)
+        return obstacles
