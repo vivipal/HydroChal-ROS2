@@ -1,0 +1,8 @@
+
+r_line = 7m
+r_follow = 7m
+
+r_max = 40 
+nogonezone = np.pi/6
+
+

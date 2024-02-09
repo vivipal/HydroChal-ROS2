@@ -11,10 +11,10 @@ def servo_callback(msg, pi, pin):
     # print("cmd received : ", msg.data)
     cmd = int(1497 +8.17*angle_safran -0.0187*angle_safran**2)
     cmd = max(1000, min(2000, cmd))
-    if (abs(angle_safran-last_angle_sent)>2.5):     # minimum de mouvement de 5deg
+    # if (abs(angle_safran-last_angle_sent)>2.5):     # minimum de mouvement de 5deg
         # print("cmd sent : ",cmd)
-        pi.set_servo_pulsewidth(pin, cmd)
-        last_angle_sent = angle_safran
+    pi.set_servo_pulsewidth(pin, cmd)
+    last_angle_sent = angle_safran
 
 def main():
     rclpy.init()
