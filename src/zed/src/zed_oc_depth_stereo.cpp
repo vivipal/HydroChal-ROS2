@@ -29,7 +29,7 @@
 #include <stereo_msgs/msg/disparity_image.hpp>
 // <---- Includes
 
-#define FROM_FILE
+// #define FROM_FILE
 #define USE_OCV_TAPI // Comment to use "normal" cv::Mat instead of CV::UMat
 // #define USE_HALF_SIZE_DISP // Comment to compute depth matching on full image frames
 

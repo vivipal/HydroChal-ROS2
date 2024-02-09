@@ -14,7 +14,7 @@ from interfaces.msg import WideObstacle, ObstacleList
 from tools import VideoProcessor, EPSILON
 
 DRAW_DISPARITY = False
-DRAW_STRATEGY = True
+RETURN_STRATEGY = True
 
 
 class ObstacleDetector(Node):
@@ -27,6 +27,7 @@ class ObstacleDetector(Node):
 
         # Create a timer with a callback function and a period of 1 / update_rate
         self.processing_timer = self.create_timer(1. / update_rate, self.processing_callback)
+        self.strategy_publisher = self.create_publisher(Image, 'strategy_image', 10)
         self.obstacles_publisher = self.create_publisher(ObstacleList, 'detected_obstacles', 10)
 
         self.image_left = None
@@ -36,14 +37,18 @@ class ObstacleDetector(Node):
         self.cx = self.cy = 0.
         self.baseline = 0.
 
-        self.bridge = CvBridge()
+        self.cv_bridge = CvBridge()
         self.video_processor = VideoProcessor()
     
     def processing_callback(self):
         obstacles = []
 
         if (self.image_left is not None) and (self.depth_map is not None):
-            boxes = self.video_processor.process(self.image_left, self.depth_map, draw_strategy=DRAW_STRATEGY)
+            boxes, strategy = self.video_processor.process(self.image_left, self.depth_map, return_stategy=RETURN_STRATEGY)
+
+            if strategy is not None:  # publish strategy image
+                ros_image_msg = self.cv_bridge.cv2_to_imgmsg(strategy, encoding="bgr8")
+                self.strategy_publisher.publish(ros_image_msg)
 
             for (w0, h0, w1, h1) in boxes:
                 window = self.depth_map[h0:h1, w0:w1]
@@ -72,11 +77,11 @@ class ObstacleDetector(Node):
     
     def image_callback(self, msg):
         # Convert ROS image message to OpenCV image
-        self.image_left = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        self.image_left = self.cv_bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
     
     def disparity_callback(self, msg):
         # Convert ROS image message to OpenCV image
-        frame = self.bridge.imgmsg_to_cv2(msg.image, desired_encoding='32FC1')
+        frame = self.cv_bridge.imgmsg_to_cv2(msg.image, desired_encoding='32FC1')
 
         if self.focal_length is not None:  # did we received camera information?
             bounded_disparity = np.maximum(msg.min_disparity, np.minimum(frame, msg.max_disparity))
@@ -100,7 +105,7 @@ class ObstacleDetector(Node):
 
 def main():
     rclpy.init()
-    obstacle_detector = ObstacleDetector(update_rate=8)  # in Hz
+    obstacle_detector = ObstacleDetector(update_rate=2)  # in Hz
 
     rclpy.spin(obstacle_detector)
 

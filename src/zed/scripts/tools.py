@@ -9,7 +9,6 @@ from sklearn.linear_model import RANSACRegressor
 EPSILON = 1e-5
 
 # Define colors in BGR
-COLOR_OF = (255, 0, 0)  # BLUE
 COLOR_HP = (0, 0, 255)  # RED
 COLOR_BOX = (255, 0, 255)  # PURPLE
 COLOR_HORIZON = (0, 255, 0)  # GREEN
@@ -92,7 +91,7 @@ class HorizonEstimator:
             print('RANSAC value error!')
             self.slope = 0.
             self.bias = None
-            return self.compute(image)
+            return horizontal_point_x, horizontal_point_y, np.zeros(shape=(2, 1, 1), dtype=float), np.ones(shape=(height, width), dtype=np.uint8)
         else:
             # Update slope
             ransac_pred_y = ransac.predict(np.array([[0.], [width - 1.]]))
@@ -110,7 +109,7 @@ class HorizonEstimator:
 
 
 class SaliencyEstimator:
-    def __init__(self, n_sigma=3.5):
+    def __init__(self, n_sigma=4.):
         self.n_sigma = n_sigma
 
     def compute(self, img_bgr, mask):
@@ -151,7 +150,7 @@ class Obstacle:
 
 
 class SIFTracker:
-    def __init__(self, top_two_ratio=0.64, keeping_ratio=0.32, pegi=2):
+    def __init__(self, top_two_ratio=0.64, keeping_ratio=0.32, pegi=1):
         self.top_two_ratio = top_two_ratio
         self.keeping_ratio = keeping_ratio
         self.pegi = pegi
@@ -241,7 +240,7 @@ class SIFTracker:
 
         verified_obstacles = []
         for obstacle in self.obstacles:
-            if obstacle.age > self.pegi:
+            if obstacle.age >= self.pegi:
                 obstacle_mask = (labels == obstacle.label)
                 if np.any(obstacle_mask):
                     x0, y0, x1, y1 = bounding_box_from_mask(obstacle_mask)
@@ -253,7 +252,7 @@ class SIFTracker:
 class VideoProcessor:
     def __init__(self):
         # Define the downscale factor
-        self.downscale_factor = 2
+        self.downscale_factor = 4
 
         self.horizon_estimator = HorizonEstimator()
         self.saliency_estimator = SaliencyEstimator()
@@ -270,7 +269,7 @@ class VideoProcessor:
         # Define variables to initialize later
         self.left_crop = None
     
-    def process(self, source_frame, source_depth, draw_strategy=False):
+    def process(self, source_frame, source_depth, return_stategy=False):
         # Crop left side of the image (where left & right POV doesn't overlapped)
         if self.left_crop is None:  # compute it once and for all
             self.left_crop = np.argmin(np.all(source_depth > 30e3, axis=0))  # look for too far area
@@ -287,7 +286,6 @@ class VideoProcessor:
         depth_map = cv2.resize(source_depth, (width, height))
 
         # Draw points and line on a separate image (for debugging only)
-        canvas = source_frame.copy()
         frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
         # Estimate a line for the horizon
@@ -308,7 +306,10 @@ class VideoProcessor:
 
         obstacles = self.obstacle_tracker.compute(frame, mask)
 
-        if draw_strategy:  # DRAW horizon information, tracking window & show layout
+        canvas = None
+        if return_stategy:  # DRAW horizon information, tracking window & show layout
+            canvas = source_frame.copy()
+
             # Scatter gradient points on the image
             for (x, y) in zip(hpx, hpy):
                 cv2.circle(canvas, (int(self.downscale_factor * x), int(self.downscale_factor * y)), 3, COLOR_HP, -1)
@@ -323,29 +324,25 @@ class VideoProcessor:
                 x0, y0, x1, y1 = np.array([*box]) * self.downscale_factor
                 cv2.rectangle(canvas, (int(x0), int(y0)), (int(x1), int(y1)), COLOR_BOX, thickness=2)
             
-            # Create the depth debug image
-            debug = cv2.cvtColor(mask * 255, cv2.COLOR_GRAY2BGR)
-            debug = cv2.resize(debug, (source_width, source_height))
+            # # Create the depth debug image
+            # debug = cv2.cvtColor(mask * 255, cv2.COLOR_GRAY2BGR)
+            # debug = cv2.resize(debug, (source_width, source_height))
 
-            # Create the depth debug image
-            debug_depth = cv2.cvtColor(eroded_depth_mask * 255, cv2.COLOR_GRAY2BGR)
-            debug_depth = cv2.resize(debug_depth, (source_width, source_height))
+            # # Create the depth debug image
+            # debug_depth = cv2.cvtColor(eroded_depth_mask * 255, cv2.COLOR_GRAY2BGR)
+            # debug_depth = cv2.resize(debug_depth, (source_width, source_height))
 
-            # Create the depth debug image
-            debug_horizon = cv2.cvtColor(horizontal_mask * 255, cv2.COLOR_GRAY2BGR)
-            debug_horizon = cv2.resize(debug_horizon, (source_width, source_height))
+            # # Create the depth debug image
+            # debug_horizon = cv2.cvtColor(horizontal_mask * 255, cv2.COLOR_GRAY2BGR)
+            # debug_horizon = cv2.resize(debug_horizon, (source_width, source_height))
 
-            # Create the depth debug image
-            debug_saliency = cv2.cvtColor(saliency_mask * 255, cv2.COLOR_GRAY2BGR)
-            debug_saliency = cv2.resize(debug_saliency, (source_width, source_height))
+            # # Create the depth debug image
+            # debug_saliency = cv2.cvtColor(saliency_mask * 255, cv2.COLOR_GRAY2BGR)
+            # debug_saliency = cv2.resize(debug_saliency, (source_width, source_height))
 
-            # Show pre-processes
+            # # Show pre-processes
             # imgs = (debug_depth, debug_horizon, debug_saliency)
             # layout = np.hstack(imgs)
             # cv2.imshow('Pre-process', layout)
 
-            # Show canvas & mask
-            cv2.imshow('Canvas & Mask', np.hstack((canvas, debug)))
-            cv2.waitKey(1)
-
-        return obstacles
+        return obstacles, canvas
