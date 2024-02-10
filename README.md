@@ -11,7 +11,7 @@
 
 ## Sections
 
-### Hardward
+### Hardware
 
 ### Simulation
 

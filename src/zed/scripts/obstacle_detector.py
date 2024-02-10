@@ -35,7 +35,7 @@ class ObstacleDetector(Node):
         
         self.focal_length = None
         self.cx = self.cy = 0.
-        self.baseline = 0.
+        self.d_stereo = 0.
 
         self.cv_bridge = CvBridge()
         self.video_processor = VideoProcessor()
@@ -44,7 +44,8 @@ class ObstacleDetector(Node):
         obstacles = []
 
         if (self.image_left is not None) and (self.depth_map is not None):
-            boxes, strategy = self.video_processor.process(self.image_left, self.depth_map, return_stategy=RETURN_STRATEGY)
+            boxes, strategy = self.video_processor.process(self.image_left, self.depth_map,
+                                                           return_strategy=RETURN_STRATEGY)
 
             if strategy is not None:  # publish strategy image
                 ros_image_msg = self.cv_bridge.cv2_to_imgmsg(strategy, encoding="bgr8")

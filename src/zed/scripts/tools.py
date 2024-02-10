@@ -66,7 +66,7 @@ class HorizonEstimator:
         height, width, *_ = image.shape
         horizontal_half_step = int(0.5 * width / self.n_vertical)
 
-        # Compute the horizontal gradient -> smallest = from far to close -> Guerledan hypothesis
+        # Compute the horizontal gradient : negative means from far to close
         horizontal_grad = sobel_h(image)
 
         # Filter top n_top largest gradient points
@@ -91,14 +91,15 @@ class HorizonEstimator:
             print('RANSAC value error!')
             self.slope = 0.
             self.bias = None
-            return horizontal_point_x, horizontal_point_y, np.zeros(shape=(2, 1, 1), dtype=float), np.ones(shape=(height, width), dtype=np.uint8)
+            return horizontal_point_x, horizontal_point_y, np.zeros(shape=(2, 1, 1), dtype=float), \
+                   np.ones(shape=(height, width), dtype=np.uint8)
         else:
             # Update slope
             ransac_pred_y = ransac.predict(np.array([[0.], [width - 1.]]))
             bias, y_w = ransac_pred_y.flatten()
             slope = (y_w - bias) / width
 
-            # Average things throught time to avoid oscillation
+            # Average things through time to avoid oscillation
             self.slope = (1. - self.alpha) * self.slope + self.alpha * slope
             self.bias = bias if self.bias is None else (1. - self.alpha) * self.bias + self.alpha * bias
 
@@ -137,44 +138,43 @@ def bounding_box_from_mask(mask):
 
 
 class Obstacle:
-    def __init__(self, keypoints, label):
-        self.keypoints = keypoints
+    def __init__(self, key_points, label):
+        self.key_points = key_points
         self.label = label
 
         self.age = 0
     
-    def update(self, new_keypoints, label):
-        self.keypoints = new_keypoints
+    def update(self, new_key_points, label):
+        self.key_points = new_key_points
         self.label = label
         self.age += 1
 
 
 class SIFTracker:
-    def __init__(self, top_two_ratio=0.64, keeping_ratio=0.32, pegi=1):
-        self.top_two_ratio = top_two_ratio
-        self.keeping_ratio = keeping_ratio
+    def __init__(self, top_two_ratio=0.5, keeping_ratio=0.32, pegi=1):
+        self.top_two_ratio = top_two_ratio  # flann matcher selector
+        self.keeping_ratio = keeping_ratio  # minimum ratio of descriptors kept by an obstacle
         self.pegi = pegi
 
         # Initialize SIFT detector
         self.sift = cv2.SIFT_create()
 
         # Initialize FLANN matcher
-        FLANN_INDEX_KDTREE = 1
-        index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
+        index_params = dict(algorithm=1, trees=5)  # select kd-tree algorithm
         search_params = dict(checks=50)
         self.flann = cv2.FlannBasedMatcher(index_params, search_params)
 
         self.frame = None
-        self.keypoints = None
+        self.key_points = None
         self.descriptors = None
 
         self.obstacles = []
 
     def compute(self, frame, mask):
-        # Find keypoints and descriptors in the current frame
-        keypoints, descriptors = self.sift.detectAndCompute(frame, mask)
+        # Find key_points and descriptors in the current frame
+        key_points, descriptors = self.sift.detectAndCompute(frame, mask)
 
-        if len(keypoints) < 2:
+        if len(key_points) < 2:
             self.frame = None
             return []
 
@@ -182,60 +182,61 @@ class SIFTracker:
         num_labels, labels = cv2.connectedComponents(mask, connectivity=8)
 
         if self.frame is None:
-            remainding_keypoints = keypoints
+            remaining_key_points = key_points
         else:
             # Match descriptors between the old and the new frame : take best 2
             matches = self.flann.knnMatch(self.descriptors, descriptors, k=2)
 
             # Apply ratio test
             good_matches = []
-            for m,n in matches:
+            for m, n in matches:
                 if m.distance < self.top_two_ratio * n.distance:
                     good_matches.append(m)
             
-            # Extract matched keypoints
-            n_matched_keypoints = len(good_matches)
-            matched_keypoints_old = [self.keypoints[m.queryIdx] for m in good_matches]
-            matched_keypoints_new = [keypoints[m.trainIdx] for m in good_matches]
+            # Extract matched key_points
+            n_matched_key_points = len(good_matches)
+            matched_key_points_old = [self.key_points[m.queryIdx] for m in good_matches]
+            matched_key_points_new = [key_points[m.trainIdx] for m in good_matches]
 
             new_obstacles = []
-            matched_keypoints_flag = [True for _ in range(n_matched_keypoints)]
+            matched_key_points_flag = [True for _ in range(n_matched_key_points)]
             for obstacle in self.obstacles:
                 keypoint_clustering = [[] for _ in range(1 + num_labels)]
                 for old_keypoint in obstacle.keypoints:
                     try:
-                        k = matched_keypoints_old.index(old_keypoint)
+                        k = matched_key_points_old.index(old_keypoint)
                     except ValueError:
                         continue
                     else:
-                        matched_keypoints_flag[k] = False
-                        new_keypoint = matched_keypoints_new[k]
+                        matched_key_points_flag[k] = False
+                        new_keypoint = matched_key_points_new[k]
                         x, y = new_keypoint.pt
-                        label = labels[int(y),int(x)]
+                        label = labels[int(y), int(x)]
                         keypoint_clustering[label].append(new_keypoint)
-                new_label, new_keypoints = max(enumerate(keypoint_clustering), key=lambda tup: len(tup[1]))
-                if new_label > 0 and len(new_keypoints) > self.keeping_ratio * len(obstacle.keypoints):
-                    obstacle.update(new_keypoints, new_label)
+                new_label, new_key_points = max(enumerate(keypoint_clustering), key=lambda tpl: len(tpl[1]))
+                if new_label > 0 and len(new_key_points) > self.keeping_ratio * len(obstacle.keypoints):
+                    obstacle.update(new_key_points, new_label)
                     new_obstacles.append(obstacle)
             
             self.obstacles = new_obstacles
-            remainding_keypoints = [matched_keypoints_new[k] for k in range(n_matched_keypoints) if matched_keypoints_flag[k]]         
+            remaining_key_points = [matched_key_points_new[k] for k in range(n_matched_key_points)
+                                    if matched_key_points_flag[k]]
         
-        # Add remainding keypoints
+        # Add remaining key_points
         obstacles = [[] for _ in range(1 + num_labels)]
-        for keypoint in remainding_keypoints:
+        for keypoint in remaining_key_points:
             x, y = keypoint.pt
-            label = labels[int(y),int(x)]
+            label = labels[int(y), int(x)]
             obstacles[label].append(keypoint)
         
-        for (label, obs_keypoints) in enumerate(obstacles):  # iterate through assigned keypoints
-            if label > 0 and len(obs_keypoints) > 0:  # only consider non empty components
-                obstacle = Obstacle(obs_keypoints, label)
+        for (label, obs_key_points) in enumerate(obstacles):  # iterate through assigned key_points
+            if label > 0 and len(obs_key_points) > 0:  # only consider non empty components
+                obstacle = Obstacle(obs_key_points, label)
                 self.obstacles.append(obstacle)
 
         # The new becomes the old
         self.frame = frame.copy()
-        self.keypoints = keypoints
+        self.key_points = key_points
         self.descriptors = descriptors
 
         verified_obstacles = []
@@ -269,7 +270,7 @@ class VideoProcessor:
         # Define variables to initialize later
         self.left_crop = None
     
-    def process(self, source_frame, source_depth, return_stategy=False):
+    def process(self, source_frame, source_depth, return_strategy=False):
         # Crop left side of the image (where left & right POV doesn't overlapped)
         if self.left_crop is None:  # compute it once and for all
             self.left_crop = np.argmin(np.all(source_depth > 30e3, axis=0))  # look for too far area
@@ -304,10 +305,11 @@ class VideoProcessor:
         mask = cv2.erode(mask, self.erosion_kernel)
         mask = cv2.dilate(mask, self.dilatation_kernel)
 
+        # Get the tracked obstacles
         obstacles = self.obstacle_tracker.compute(frame, mask)
 
         canvas = None
-        if return_stategy:  # DRAW horizon information, tracking window & show layout
+        if return_strategy:  # DRAW horizon information, tracking window & show layout
             canvas = source_frame.copy()
 
             # Scatter gradient points on the image
