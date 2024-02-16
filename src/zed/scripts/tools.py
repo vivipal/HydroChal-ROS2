@@ -126,17 +126,6 @@ class SaliencyEstimator:
         return saliency_mask
 
 
-def bounding_box_from_mask(mask):
-    # Find indices of True values
-    true_indices = np.argwhere(mask)
-
-    # Calculate bounding box coordinates
-    y0, x0 = np.min(true_indices, axis=0)
-    y1, x1 = np.max(true_indices, axis=0)
-
-    return x0, y0, x1, y1
-
-
 class Obstacle:
     def __init__(self, key_points, label):
         self.key_points = key_points
@@ -151,7 +140,7 @@ class Obstacle:
 
 
 class SIFTracker:
-    def __init__(self, top_two_ratio=0.5, keeping_ratio=0.32, pegi=1):
+    def __init__(self, top_two_ratio=0.5, keeping_ratio=0.5, pegi=2):
         self.top_two_ratio = top_two_ratio  # flann matcher selector
         self.keeping_ratio = keeping_ratio  # minimum ratio of descriptors kept by an obstacle
         self.pegi = pegi
@@ -181,7 +170,7 @@ class SIFTracker:
         # Perform connected component labeling
         num_labels, labels = cv2.connectedComponents(mask, connectivity=8)
 
-        if self.frame is None:
+        if self.frame is None:  # this SIFTracker needs to be (re)initialized
             remaining_key_points = key_points
         else:
             # Match descriptors between the old and the new frame : take best 2
@@ -198,27 +187,43 @@ class SIFTracker:
             matched_key_points_old = [self.key_points[m.queryIdx] for m in good_matches]
             matched_key_points_new = [key_points[m.trainIdx] for m in good_matches]
 
+            # Will contain the successfully tracked obstacles
             new_obstacles = []
+
+            # Boolean list to determine not matched key_points
             matched_key_points_flag = [True for _ in range(n_matched_key_points)]
+
+            # For each obstacles tracked so far
             for obstacle in self.obstacles:
+
+                # Classify each key_points from this obstacle into num_labels components
                 keypoint_clustering = [[] for _ in range(1 + num_labels)]
-                for old_keypoint in obstacle.keypoints:
-                    try:
+
+                for old_keypoint in obstacle.key_points:
+                    try:  # to match key_points
                         k = matched_key_points_old.index(old_keypoint)
                     except ValueError:
                         continue
                     else:
-                        matched_key_points_flag[k] = False
-                        new_keypoint = matched_key_points_new[k]
+                        matched_key_points_flag[k] = False  # remove this key_point from the not matched array
+                        new_keypoint = matched_key_points_new[k]  # get the now corresponding key_point 
+                        
+                        # Determine to which component this new key_point belongs
                         x, y = new_keypoint.pt
                         label = labels[int(y), int(x)]
+
+                        # Add this new key_point to its corresponding component
                         keypoint_clustering[label].append(new_keypoint)
+
+                # Determine the new component and the new key_points list embodying this obstacle
                 new_label, new_key_points = max(enumerate(keypoint_clustering), key=lambda tpl: len(tpl[1]))
-                if new_label > 0 and len(new_key_points) > self.keeping_ratio * len(obstacle.keypoints):
-                    obstacle.update(new_key_points, new_label)
+
+                # If this obstacle doesn't belong to the background and that it kept a good ratio of its key_points
+                if new_label > 0 and len(new_key_points) > self.keeping_ratio * len(obstacle.key_points):
+                    obstacle.update(new_key_points, new_label)  # update obstacle's key_points and label
                     new_obstacles.append(obstacle)
             
-            self.obstacles = new_obstacles
+            self.obstacles = new_obstacles  # update obstacle's array
             remaining_key_points = [matched_key_points_new[k] for k in range(n_matched_key_points)
                                     if matched_key_points_flag[k]]
         
@@ -230,7 +235,7 @@ class SIFTracker:
             obstacles[label].append(keypoint)
         
         for (label, obs_key_points) in enumerate(obstacles):  # iterate through assigned key_points
-            if label > 0 and len(obs_key_points) > 0:  # only consider non empty components
+            if label > 0 and len(obs_key_points) > 0:  # only consider non background and non empty components
                 obstacle = Obstacle(obs_key_points, label)
                 self.obstacles.append(obstacle)
 
@@ -244,20 +249,47 @@ class SIFTracker:
             if obstacle.age >= self.pegi:
                 obstacle_mask = (labels == obstacle.label)
                 if np.any(obstacle_mask):
-                    x0, y0, x1, y1 = bounding_box_from_mask(obstacle_mask)
-                    verified_obstacles.append((x0, y0, x1, y1))
+                    verified_obstacles.append(obstacle_mask)
         
         return verified_obstacles
+
+
+def bounding_box_from_mask(mask):
+    # Find indices of True values
+    true_indices = np.argwhere(mask)
+
+    # Calculate bounding box coordinates
+    y0, x0 = np.min(true_indices, axis=0)
+    y1, x1 = np.max(true_indices, axis=0)
+
+    return x0, y0, x1, y1
+
+
+class Buffer:
+    def __init__(self, size=12):
+        self.data = []
+        self.size = size
+    
+    def get_data(self):
+        return self.data
+
+    def push(self, value):
+        self.data.append(value)
+        self.data = self.data[-self.size:]
 
 
 class VideoProcessor:
     def __init__(self):
         # Define the downscale factor
-        self.downscale_factor = 4
+        self.downscale_factor = 2  # impact kernel sizes!
+
+        self.far_away = 30e3  # maximum camera distance in milimeters
 
         self.horizon_estimator = HorizonEstimator()
         self.saliency_estimator = SaliencyEstimator()
         self.obstacle_tracker = SIFTracker()
+
+        self.box_buffer = Buffer()
 
         # Erosion & dilatation are applied on active pixel -> used for computing the saliency mask
         self.dilate_depth = cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(11, 11))
@@ -267,13 +299,13 @@ class VideoProcessor:
         self.erosion_kernel = cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(5, 5))
         self.dilatation_kernel = cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(11, 11))
 
-        # Define variables to initialize later
+        # Define variables to be initialized later
         self.left_crop = None
     
     def process(self, source_frame, source_depth, return_strategy=False):
         # Crop left side of the image (where left & right POV doesn't overlapped)
         if self.left_crop is None:  # compute it once and for all
-            self.left_crop = np.argmin(np.all(source_depth > 30e3, axis=0))  # look for too far area
+            self.left_crop = np.argmin(np.all(source_depth > self.far_away, axis=0))  # look for too far area
         source_frame = source_frame[:, self.left_crop:]
         source_depth = source_depth[:, self.left_crop:]
 
@@ -290,25 +322,49 @@ class VideoProcessor:
         frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
         # Estimate a line for the horizon
-        depth_mask = (depth_map < 20e3).astype(np.uint8)
+        depth_mask = (depth_map < self.far_away).astype(np.uint8)
         dilated_depth_mask = cv2.dilate(depth_mask, self.dilate_depth)
         hpx, hpy, border_y, horizontal_mask = self.horizon_estimator.compute(dilated_depth_mask)
+
+        boxes_mask = np.ones_like(depth_mask)
+        for ds_boxes in self.box_buffer.get_data():
+            for (x0, y0, x1, y1) in ds_boxes:
+                boxes_mask[y0:y1, x0:x1] = 0
         
         # Compute the saliency map (where to look)
-        bottom_mask = horizontal_mask & depth_mask
+        bottom_mask = depth_mask & horizontal_mask & boxes_mask
         saliency_mask = self.saliency_estimator.compute(frame_bgr, bottom_mask)
 
         eroded_depth_mask = cv2.erode(depth_mask, self.erode_depth)
-        mask = saliency_mask & horizontal_mask & eroded_depth_mask
+        mask = eroded_depth_mask & horizontal_mask & saliency_mask
 
         mask = cv2.dilate(mask, self.connection_kernel)
         mask = cv2.erode(mask, self.erosion_kernel)
         mask = cv2.dilate(mask, self.dilatation_kernel)
 
         # Get the tracked obstacles
-        obstacles = self.obstacle_tracker.compute(frame, mask)
+        obstacle_masks = self.obstacle_tracker.compute(frame, mask)
 
+        boxes = []  # real scale boxes
+        downscaled_boxes = []
+
+        for obstacle_mask in obstacle_masks:
+            # Only consider distances smaller than 30m
+            obstacle_depth = depth_map[obstacle_mask]
+            valid_distances = obstacle_depth[obstacle_depth < self.far_away]
+
+            if valid_distances.size > 0:
+                z = np.median(valid_distances)
+
+                box = bounding_box_from_mask(obstacle_mask)
+                downscaled_boxes.append(box)
+
+                x0, y0, x1, y1 = np.array([*box]) * self.downscale_factor
+                boxes.append((x0, y0, x1, y1, z))
+        
         canvas = None
+        self.box_buffer.push(downscaled_boxes)
+
         if return_strategy:  # DRAW horizon information, tracking window & show layout
             canvas = source_frame.copy()
 
@@ -322,29 +378,29 @@ class VideoProcessor:
             cv2.polylines(canvas, [ransac_points * self.downscale_factor],
                           isClosed=False, color=COLOR_HORIZON, thickness=2)
             
-            for box in obstacles:
-                x0, y0, x1, y1 = np.array([*box]) * self.downscale_factor
+            for (x0, y0, x1, y1, _) in boxes:
                 cv2.rectangle(canvas, (int(x0), int(y0)), (int(x1), int(y1)), COLOR_BOX, thickness=2)
             
-            # # Create the depth debug image
-            # debug = cv2.cvtColor(mask * 255, cv2.COLOR_GRAY2BGR)
-            # debug = cv2.resize(debug, (source_width, source_height))
+            # Create the depth debug image
+            debug = cv2.cvtColor(mask * 255, cv2.COLOR_GRAY2BGR)
+            debug = cv2.resize(debug, (source_width, source_height))
 
-            # # Create the depth debug image
-            # debug_depth = cv2.cvtColor(eroded_depth_mask * 255, cv2.COLOR_GRAY2BGR)
-            # debug_depth = cv2.resize(debug_depth, (source_width, source_height))
+            # Create the boxes debug image
+            debug_boxes = cv2.cvtColor(boxes_mask * 255, cv2.COLOR_GRAY2BGR)
+            debug_boxes = cv2.resize(debug_boxes, (source_width, source_height))
 
-            # # Create the depth debug image
-            # debug_horizon = cv2.cvtColor(horizontal_mask * 255, cv2.COLOR_GRAY2BGR)
-            # debug_horizon = cv2.resize(debug_horizon, (source_width, source_height))
+            # Create the bottom debug image
+            debug_bottom = cv2.cvtColor(bottom_mask * 255, cv2.COLOR_GRAY2BGR)
+            debug_bottom = cv2.resize(debug_bottom, (source_width, source_height))
 
-            # # Create the depth debug image
-            # debug_saliency = cv2.cvtColor(saliency_mask * 255, cv2.COLOR_GRAY2BGR)
-            # debug_saliency = cv2.resize(debug_saliency, (source_width, source_height))
+            # Create the saliency debug image
+            debug_saliency = cv2.cvtColor(mask * 255, cv2.COLOR_GRAY2BGR)
+            debug_saliency = cv2.resize(debug_saliency, (source_width, source_height))
 
-            # # Show pre-processes
-            # imgs = (debug_depth, debug_horizon, debug_saliency)
-            # layout = np.hstack(imgs)
-            # cv2.imshow('Pre-process', layout)
+            # Show pre-processes
+            imgs = (debug_boxes, debug_bottom, debug_saliency)
+            layout = np.hstack(imgs)
+            cv2.imshow('Boxes / Bottom / Saliency', layout)
+            cv2.waitKey(1)
 
-        return obstacles, canvas
+        return boxes, canvas

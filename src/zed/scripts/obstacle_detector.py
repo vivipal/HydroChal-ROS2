@@ -13,7 +13,6 @@ from interfaces.msg import WideObstacle, ObstacleList
 
 from tools import VideoProcessor, EPSILON
 
-DRAW_DISPARITY = False
 RETURN_STRATEGY = True
 
 
@@ -51,26 +50,19 @@ class ObstacleDetector(Node):
                 ros_image_msg = self.cv_bridge.cv2_to_imgmsg(strategy, encoding="bgr8")
                 self.strategy_publisher.publish(ros_image_msg)
 
-            for (w0, h0, w1, h1) in boxes:
-                window = self.depth_map[h0:h1, w0:w1]
-                # only consider distances smaller than 30m
-                valid_distances = window[window < 30e3]
+            for (x0, y0, x1, y1, z) in boxes:
+                tx = -self.d_stereo / 2.  # left camera
+                obstacle = WideObstacle()
 
-                if valid_distances.size > 0:
-                    tx = -self.d_stereo / 2.  # left camera
-                    z = np.median(valid_distances)
+                # Expressed coordinates in the centered frame (in between the 2 cameras)
+                obstacle.x_min = ((x0 - self.cx) * z - tx) / self.focal_length
+                obstacle.x_max = ((x1 - self.cx) * z - tx) / self.focal_length
 
-                    obstacle = WideObstacle()
+                obstacle.y_min = (y0 - self.cy) * (z / self.focal_length)
+                obstacle.y_max = (y1 - self.cy) * (z / self.focal_length)
 
-                    # Expressed coordinates in the centered frame (in between the 2 cameras)
-                    obstacle.x_min = ((w0 - self.cx) * z - tx) / self.focal_length
-                    obstacle.x_max = ((w1 - self.cx) * z - tx) / self.focal_length
-
-                    obstacle.y_min = (h0 - self.cy) * (z / self.focal_length)
-                    obstacle.y_max = (h1 - self.cy) * (z / self.focal_length)
-
-                    obstacle.z = float(z)
-                    obstacles.append(obstacle)
+                obstacle.z = float(z)
+                obstacles.append(obstacle)
 
         obstacles_msg = ObstacleList()
         obstacles_msg.obstacles = obstacles
@@ -87,11 +79,6 @@ class ObstacleDetector(Node):
         if self.focal_length is not None:  # did we received camera information?
             bounded_disparity = np.maximum(msg.min_disparity, np.minimum(frame, msg.max_disparity))
             self.depth_map = self.d_stereo / np.maximum(EPSILON, bounded_disparity)
-
-            if DRAW_DISPARITY:
-                disparity = (bounded_disparity * (255. / msg.max_disparity)).astype(np.uint8)
-                cv2.imshow("Disparity", disparity)
-                cv2.waitKey(1)
     
     def camera_info_callback(self, msg):
         projection_matrix = msg.p
@@ -106,7 +93,7 @@ class ObstacleDetector(Node):
 
 def main():
     rclpy.init()
-    obstacle_detector = ObstacleDetector(update_rate=2)  # in Hz
+    obstacle_detector = ObstacleDetector(update_rate=8)  # in Hz
 
     rclpy.spin(obstacle_detector)
 
